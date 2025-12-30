@@ -1,0 +1,44 @@
+# =========================
+# Core agent framework
+# =========================
+langgraph>=0.1.20
+langchain>=0.2.0
+langchain-core>=0.2.0
+langchain-community>=0.2.0
+
+# =========================
+# LLM providers (free-first)
+# =========================
+langchain-groq>=0.1.0        # Groq (Llama 3.1, fast & free tier)
+langchain-ollama>=0.1.0      # Local models via Ollama
+
+# =========================
+# Configuration & typing
+# =========================
+python-dotenv>=1.0.0         # .env support
+pydantic>=2.5.0              # Structured state & validation
+typing-extensions>=4.9.0     # TypedDict, Annotated, etc.
+
+# =========================
+# Optional (but recommended)
+# =========================
+rich>=13.7.0                 # Better logs / debug output
+loguru>=0.7.2                # Structured logging
+
+# =========================
+# Testing
+# =========================
+pytest>=8.0.0
+
+
+# Vector memory (IRIS)
+chromadb
+faiss-cpu
+
+# API layer
+fastapi
+uvicorn
+
+# Observability
+langsmith
+opentelemetry-sdk

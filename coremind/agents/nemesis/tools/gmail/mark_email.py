@@ -1,0 +1,64 @@
+# coremind/agents/nemesis/tools/gmail/mark_email.py
+
+from coremind.logging import get_logger
+
+log = get_logger("NEMESIS.TOOL.MARK_EMAIL")
+
+
+class MarkEmailTool:
+    name = "mark_email"
+    description = "Mark a Gmail message as read or unread."
+    args_schema = {
+        "id": {
+            "type": "string",
+            "required": True,
+            "description": "Gmail message ID",
+        },
+        "state": {
+            "type": "string",
+            "required": True,
+            "description": "read or unread",
+        },
+    }
+
+    def __init__(self, service):
+        self.service = service
+
+    def run(self, args: dict):
+        msg_id = args.get("id")
+        if not msg_id:
+            raise ValueError("mark_email requires message id")
+
+        state = args.get("state")
+
+        if not msg_id:
+            raise ValueError("mark_email requires message id")
+
+        if state not in ("read", "unread"):
+            raise ValueError("state must be 'read' or 'unread'")
+
+        log.info("Marking email %s as %s", msg_id, state)
+
+        labels_to_add = []
+        labels_to_remove = []
+
+        if state == "read":
+            labels_to_remove = ["UNREAD"]
+        else:
+            labels_to_add = ["UNREAD"]
+
+        # Gmail MODIFY is a mutation — no candidates involved
+        self.service.users().threads().modify(
+            userId="me",
+            id=msg_id,
+            body={
+                "addLabelIds": labels_to_add,
+                "removeLabelIds": labels_to_remove,
+            },
+        ).execute()
+
+        return {
+            "status": "success",
+            "id": msg_id,
+            "state": state,
+        }

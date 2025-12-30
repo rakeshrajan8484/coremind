@@ -1,0 +1,34 @@
+# =========================
+# Core agent framework
+# =========================
+langgraph==0.1.20
+langchain==0.2.14
+langchain-core==0.2.36
+langchain-community==0.2.12
+
+# =========================
+# LLM providers
+# =========================
+langchain-groq==0.1.9
+langchain-ollama==0.1.3
+
+# =========================
+# Configuration & typing
+# =========================
+python-dotenv==1.0.1
+pydantic==2.8.2
+typing-extensions==4.12.2
+
+# =========================
+# Logging & DX
+# =========================
+rich==13.8.1
+loguru==0.7.2
+
+# =========================
+# Testing
+# =========================
+pytest==8.3.2
+
+
+tzlocal-5.3.1
