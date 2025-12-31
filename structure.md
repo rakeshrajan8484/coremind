@@ -1,47 +1,85 @@
-User
- ↓
-ATLAS (conversation + planning)
- ↓ objective
-NEMESIS (LLM execution agent)
- ↓ tool calls
-TOOLS (Gmail, etc.)
- ↓ observations
-NEMESIS (decides: next tool OR done)
- ↓ result
-ATLAS (final response to user)
-
-          ↑
-          |
-        IRIS
- (reference resolution service)
-
-
- | Component     | Owns                                                                                | Does NOT Own                            |
-| ------------- | ----------------------------------------------------------------------------------- | --------------------------------------- |
-| **ATLAS**     | Conversation, intent understanding, clarification, objective lifecycle, termination | Tool execution, low-level API reasoning |
-| **NEMESIS**   | Tool selection, argument selection, execution loops, completion judgment            | User interaction, clarification         |
-| **TOOLS**     | API calls, schemas, side effects                                                    | Reasoning                               |
-| **IRIS**      | Reference resolution, entity disambiguation                                         | Planning, execution, looping            |
-| **LangGraph** | Control flow                                                                        | Intelligence                            |
-
-
-Final, contradiction-free mental model (lock this in)
-Agents (autonomous, looping, decision-making)
-
-ATLAS
-
-NEMESIS
-
-Cognitive Services (stateless, callable, no loops)
-
-IRIS
-
-Execution Primitives
-
-Tools
-
-Infrastructure
-
-LangGraph
-
-LLMFactory
+.
+├── .coremind
+│   └── gmail_credentials.json
+├── coremind
+│   ├── agents
+│   │   ├── atlas
+│   │   │   ├── __init__.py
+│   │   │   ├── intent_satisfaction.py
+│   │   │   ├── node.py
+│   │   │   ├── objective_compiler.py
+│   │   │   ├── parser.py
+│   │   │   └── prompt.py
+│   │   └── nemesis
+│   │       ├── adapters
+│   │       │   ├── documents.py
+│   │       │   ├── email.py
+│   │       │   ├── files.py
+│   │       │   └── types.py
+│   │       ├── tools
+│   │       │   ├── gmail
+│   │       │   │   ├── __init__.py
+│   │       │   │   ├── check_unread.py
+│   │       │   │   ├── delete_email.py
+│   │       │   │   ├── get_email_content.py
+│   │       │   │   ├── list_recent_emails.py
+│   │       │   │   ├── mark_all_read.py
+│   │       │   │   └── mark_email.py
+│   │       │   ├── __init__.py
+│   │       │   └── registry.py
+│   │       ├── __init__.py
+│   │       ├── agent.py
+│   │       ├── node.py
+│   │       └── prompt.py
+│   ├── api
+│   │   └── server.py
+│   ├── graph
+│   │   ├── __init__.py
+│   │   ├── graph.py
+│   │   ├── validate.py
+│   │   └── validate_node.py
+│   ├── integrations
+│   │   └── gmail
+│   │       └── client.py
+│   ├── llms
+│   │   ├── __init__.py
+│   │   └── factory.py
+│   ├── objectives
+│   │   ├── __init__.py
+│   │   ├── registry.py
+│   │   ├── spec.py
+│   │   └── validate.py
+│   ├── services
+│   │   └── iris
+│   │       ├── __init__.py
+│   │       ├── prompt.py
+│   │       └── resolver.py
+│   ├── tools
+│   │   ├── __init__.py
+│   │   ├── registry.py
+│   │   ├── schemas.py
+│   │   └── utils.py
+│   ├── __init__.py
+│   ├── config.py
+│   ├── logging.py
+│   ├── main.py
+│   └── state.py
+├── coremind.egg-info
+│   ├── dependency_links.txt
+│   ├── PKG-INFO
+│   ├── requires.txt
+│   ├── SOURCES.txt
+│   └── top_level.txt
+├── tests
+│   └── test_graph.py
+├── .env
+├── .gitattributes
+├── .gitignore
+├── CoreMind_Architecture_Contract.md
+├── pyproject.toml
+├── README.md
+├── requirements.lock.txt
+├── requirements.txt
+├── structure.md
+├── tree.py
+└── uv.lock

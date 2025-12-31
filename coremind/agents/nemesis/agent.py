@@ -17,6 +17,8 @@ TERMINAL_INTENTS = {
     ("email", "update_read_state"),
     ("email", "delete_message"),
     ("email", "summarize"),
+    ("email", "compose_message"),
+    ("email", "send_draft"),
 }
 
 
@@ -33,31 +35,48 @@ class NemesisAgent:
         self.llm = LLMFactory.nemesis()
         self.tools = TOOL_REGISTRY
 
+    def _extract_concrete_id(
+        self, objective: Dict[str, Any], state: Dict[str, Any]
+    ) -> str | None:
+        """
+        Canonical identity extraction.
+        Supports IRIS resolution and domain-specific IDs.
+        """
+
+        if state.get("resolved_id"):
+            return state["resolved_id"]
+
+        target = objective.get("target") or {}
+        filter_ = target.get("filter") or {}
+        entity = target.get("entity")
+
+        if entity == "draft":
+            return filter_.get("draft_id")
+
+        if entity == "message":
+            return filter_.get("id")
+
+        if entity == "thread":
+            return filter_.get("thread_id")
+
+        return None
+
     # --------------------------------------------------
     # Public entry
     # --------------------------------------------------
-
     def run(self, state: Dict[str, Any]) -> Dict[str, Any]:
         self._reset_run_state()
         self._validate_state(state)
 
         objective = state["objective"]
-
-        # --------------------------------------------------
-        # 🔒 CANONICAL ID NORMALIZATION (ONCE)
-        # --------------------------------------------------
-        resolved_id = state.get("resolved_id")
-        if not resolved_id:
-            resolved_id = (
-                objective
-                .get("target", {})
-                .get("filter", {})
-                .get("id")
-            )
-
         domain = objective.get("domain")
         intent = objective.get("intent")
-        terminal = (domain, intent) in TERMINAL_INTENTS
+
+        # --------------------------------------------------
+        # 🔒 CANONICAL ID NORMALIZATION
+        # --------------------------------------------------
+        resolved_id = self._extract_concrete_id(objective, state)
+
 
         # --------------------------------------------------
         # 🔒 HARD TERMINAL: candidate retrieval
@@ -72,6 +91,54 @@ class NemesisAgent:
             }
 
         # --------------------------------------------------
+        # 🔒 HARD TERMINAL: CREATE (NO LLM, NO LOOP)
+        # --------------------------------------------------
+        if objective.get("operation", {}).get("type") == "create":
+            tool = self._select_create_tool(objective)
+
+            args = dict(objective.get("constraints") or {})
+            self.tools.validate_args(tool.name, args)
+
+            log.warning(
+                "NEMESIS TOOL CALL | tool=%s | args=%r",
+                tool.name,
+                args,
+            )
+
+            result = tool.run(args)
+
+            return {
+                "status": "success",
+                "summary": "Email draft created successfully.",
+                "artifacts": {"raw_data": result},
+            }
+        # --------------------------------------------------
+        # 🔒 HARD TERMINAL: SEND DRAFT (NO LLM)
+        # --------------------------------------------------
+        if (domain, intent) == ("email", "send_draft"):
+            draft_id = resolved_id
+            if not draft_id:
+                raise ValueError("send_draft requires draft_id")
+
+            tool = self.tools.get("send_draft")
+
+            args = {"id": draft_id}
+            self.tools.validate_args("send_draft", args)
+
+            log.warning(
+                "NEMESIS TOOL CALL | tool=send_draft | args=%r",
+                args,
+            )
+
+            result = tool.run(args)
+
+            return {
+                "status": "success",
+                "summary": "Draft sent successfully.",
+                "artifacts": {"raw_data": result},
+            }
+
+        # --------------------------------------------------
         # 🔒 HARD CONTRACT: resolved identity required
         # --------------------------------------------------
         target = objective.get("target", {})
@@ -81,8 +148,10 @@ class NemesisAgent:
                 "without a concrete ID"
             )
 
+        terminal = (domain, intent) in TERMINAL_INTENTS
+
         # --------------------------------------------------
-        # Normal execution loop
+        # Normal execution loop (LLM-driven)
         # --------------------------------------------------
         while True:
             step = self._decide_next_step(objective)
@@ -107,29 +176,44 @@ class NemesisAgent:
     # --------------------------------------------------
     # Run-local state
     # --------------------------------------------------
-
     def _reset_run_state(self) -> None:
         self.observations: List[Dict[str, Any]] = []
         self.called_tools: set[str] = set()
 
     # --------------------------------------------------
+    # 🔒 CREATE tool selector (FIXED)
+    # --------------------------------------------------
+    def _select_create_tool(self, objective: Dict[str, Any]):
+        for name in self.tools.list():
+            tool = self.tools.get(name)
+            caps = getattr(tool, "capabilities", {})
+
+            if (
+                caps.get("domain") == objective.get("domain")
+                and caps.get("intent") == objective.get("intent")
+            ):
+                return tool
+
+        raise ValueError(
+            f"No CREATE tool registered for "
+            f"{objective.get('domain')}::{objective.get('intent')}"
+        )
+
+    # --------------------------------------------------
     # Candidate retrieval (DISCOVERY ROUTING)
     # --------------------------------------------------
-
     def _retrieve_candidates(self, objective: Dict[str, Any]) -> List[Dict[str, Any]]:
         constraints = objective.get("constraints") or {}
         limit = constraints.get("limit", 10)
-
         discovery_scope = constraints.get("discovery_scope", "unread_only")
 
-        if discovery_scope == "recent_any":
-            tool_name = "list_recent_emails"
-        else:
-            tool_name = "check_unread"
+        tool_name = (
+            "list_recent_emails"
+            if discovery_scope == "recent_any"
+            else "check_unread"
+        )
 
         tool = self.tools.get(tool_name)
-        if not tool:
-            raise ValueError(f"Discovery tool not available: {tool_name}")
 
         log.warning(
             "NEMESIS DISCOVERY | scope=%s | tool=%s | limit=%d",
@@ -140,25 +224,17 @@ class NemesisAgent:
 
         raw_result = tool.run({"limit": limit})
 
-        if isinstance(raw_result, list):
-            messages = raw_result
-        elif isinstance(raw_result, dict):
-            messages = raw_result.get("messages", [])
-        else:
-            raise ValueError(f"Unsupported retrieval result: {type(raw_result)}")
+        messages = (
+            raw_result
+            if isinstance(raw_result, list)
+            else raw_result.get("messages", [])
+        )
 
-        entity = objective.get("target", {}).get("entity")
-        if entity != "message":
-            raise ValueError(f"No adapter for entity type: {entity}")
-
-        candidates = [email_to_candidate(m) for m in messages]
-        log.debug("Candidates sample: %s", candidates[:2])
-        return candidates
+        return [email_to_candidate(m) for m in messages]
 
     # --------------------------------------------------
     # LLM decision
     # --------------------------------------------------
-
     def _decide_next_step(self, objective: Dict[str, Any]) -> Dict[str, Any]:
         prompt = self._build_prompt(objective)
         response = self.llm.invoke(prompt)
@@ -167,7 +243,6 @@ class NemesisAgent:
     # --------------------------------------------------
     # Tool execution (STRICT)
     # --------------------------------------------------
-
     def _execute_tool(self, step: Dict[str, Any], resolved_id: str | None) -> None:
         tool_name = step["tool"]
         llm_args = step.get("args", {})
@@ -176,26 +251,12 @@ class NemesisAgent:
             raise ValueError(f"Repeated tool call blocked: {tool_name}")
 
         tool = self.tools.get(tool_name)
-        if not tool:
-            raise ValueError(f"Unknown tool: {tool_name}")
 
         args = dict(llm_args)
         if resolved_id and "id" not in args:
             args["id"] = resolved_id
 
-        schema = tool.args_schema or {}
-
-        for arg, spec in schema.items():
-            if spec.get("required") and arg not in args:
-                raise ValueError(
-                    f"Tool '{tool_name}' missing required arg: '{arg}'"
-                )
-
-        for arg in args:
-            if arg not in schema:
-                raise ValueError(
-                    f"Tool '{tool_name}' received unknown arg: '{arg}'"
-                )
+        self.tools.validate_args(tool_name, args)
 
         log.warning(
             "NEMESIS TOOL CALL | tool=%s | args=%r",
@@ -215,7 +276,6 @@ class NemesisAgent:
     # --------------------------------------------------
     # Prompting
     # --------------------------------------------------
-
     def _build_prompt(self, objective: Dict[str, Any]) -> str:
         return f"""
 You are NEMESIS, an execution-only agent.
@@ -241,43 +301,21 @@ Rules:
     # --------------------------------------------------
     # Parsing
     # --------------------------------------------------
-
     def _parse_llm_step(self, content: str) -> Dict[str, Any]:
-        try:
-            raw = json.loads(content)
-        except json.JSONDecodeError as e:
-            raise ValueError(f"Invalid JSON from NEMESIS:\n{content}") from e
+        raw = json.loads(content)
 
-        if not isinstance(raw, dict):
-            raise ValueError("Step must be a JSON object")
+        if raw.get("type") == "done":
+            return {"type": "done", "summary": raw.get("summary")}
 
-        step_type = raw.get("type")
-
-        if step_type == "done":
-            return {
-                "type": "done",
-                "summary": raw.get("summary"),
-            }
-
-        tool_name = (
-            raw.get("tool")
-            or raw.get("action")
-            or raw.get("tool_name")
-        )
-
-        if tool_name:
-            return {
-                "type": "tool",
-                "tool": tool_name,
-                "args": raw.get("args", {}),
-            }
+        tool = raw.get("tool") or raw.get("action")
+        if tool:
+            return {"type": "tool", "tool": tool, "args": raw.get("args", {})}
 
         raise ValueError(f"Invalid step: {raw}")
 
     # --------------------------------------------------
     # Validation & result
     # --------------------------------------------------
-
     def _validate_state(self, state: Dict[str, Any]) -> None:
         if not state.get("objective"):
             raise ValueError("NEMESIS requires an objective")

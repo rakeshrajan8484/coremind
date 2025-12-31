@@ -64,6 +64,7 @@ RETRIEVE_CANDIDATES = ObjectiveSpec(
     requires_concrete_identity=False,
 )
 
+
 # -------------------------------------------------
 # SUMMARIZE MESSAGE (READ-ONLY)
 # -------------------------------------------------
@@ -89,6 +90,66 @@ SUMMARIZE_MESSAGE = ObjectiveSpec(
     requires_concrete_identity=True,
 )
 
+
+# -------------------------------------------------
+# COMPOSE MESSAGE (CREATE DRAFT)
+# -------------------------------------------------
+
+COMPOSE_MESSAGE = ObjectiveSpec(
+    domain="email",
+    intent="compose_message",
+    description="Compose a new email draft",
+
+    # Creation → no existing entity
+    allowed_selectors=["new"],
+    required_filter_fields={
+        "new": [],
+    },
+
+    operation_type="create",
+    allowed_operation_values=["email_draft"],
+
+    # 🔒 MUST NOT require identity
+    requires_concrete_identity=False,
+)
+
+# -------------------------------------------------
+# SEND MESSAGE (SEND DRAFT)
+# -------------------------------------------------
+
+SEND_MESSAGE = ObjectiveSpec(
+    domain="email",
+    intent="send_message",
+    description="Send an existing email draft",
+
+    allowed_selectors=["specific"],
+    required_filter_fields={
+        "specific": ["draft_id"],
+    },
+
+    operation_type="send",
+    allowed_operation_values=["email"],
+
+    # 🔒 draft_id is mandatory
+    requires_concrete_identity=True,
+)
+
+SEND_DRAFT = ObjectiveSpec(
+    domain="email",
+    intent="send_draft",
+    description="Send an existing drafted email",
+
+    allowed_selectors=["single"],
+    required_filter_fields={
+        "single": ["draft_id"],
+    },
+
+    operation_type="send",
+    allowed_operation_values=["draft"],
+
+    requires_concrete_identity=True,
+)
+
 # -------------------------------------------------
 # OBJECTIVE REGISTRY
 # -------------------------------------------------
@@ -98,4 +159,7 @@ OBJECTIVE_REGISTRY = {
     ("email", "delete_message"): DELETE_MESSAGE,
     ("email", "summarize"): SUMMARIZE_MESSAGE,
     ("entity", "retrieve_candidates"): RETRIEVE_CANDIDATES,
+    ("email", "compose_message"): COMPOSE_MESSAGE,
+    ("email", "send_message"): SEND_MESSAGE,
+    ("email", "send_draft"): SEND_DRAFT,
 }

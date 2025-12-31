@@ -1,5 +1,4 @@
-from typing import TypedDict, Optional, Dict, Any, List, Set
-
+from typing import Any, Dict, List, Literal, Optional, Set, TypedDict
 
 class CoreMindState(TypedDict, total=False):
     """
@@ -8,33 +7,45 @@ class CoreMindState(TypedDict, total=False):
     """
 
     # =========================
-    # User / Intent layer
+    # Routing (LangGraph)
     # =========================
-    intent: str                      # Raw or normalized user intent
+    current_agent: Literal["atlas", "nemesis", "iris"]
 
     # =========================
-    # Planning layer (ATLAS)
+    # User / Intent
     # =========================
-    plan: List[Dict[str, Any]]        # High-level steps decided by ATLAS (optional)
-    current_step: Optional[int]
+    intent: str
+    messages: List[Any]
 
     # =========================
-    # Execution layer (NEMESIS)
+    # Planning / Orchestration (ATLAS)
     # =========================
-    objective: Dict[str, Any]         # Single executable objective (REQUIRED for NEMESIS)
+    objective: Optional[Dict[str, Any]]
+    objective_queue: List[Dict[str, Any]]
+
+    # =========================
+    # Discovery / Resolution
+    # =========================
+    candidates: List[Dict[str, Any]]
+    reference: Optional[str]
+    needs_reference_resolution: bool
+    resolved_id: Optional[str]
+
+    # =========================
+    # 🔒 Email Draft Lifecycle (NEW)
+    # =========================
+    last_draft_id: Optional[str]
+
+    # =========================
+    # Execution (NEMESIS)
+    # =========================
     observations: List[Dict[str, Any]]
     called_tools: Set[str]
     fetched_email_ids: Set[str]
     force_done: bool
 
     # =========================
-    # Resolution layer (IRIS)
+    # Result / Termination
     # =========================
-    unresolved_references: List[str]
-    resolved_references: Dict[str, Any]
-
-    # =========================
-    # Final output
-    # =========================
-    result: Dict[str, Any]
+    result: Optional[Dict[str, Any]]
     terminated: bool

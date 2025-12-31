@@ -10,29 +10,27 @@ from coremind.services.iris.resolver import iris_node
 # -------------------------------------------------
 
 def route_from_atlas(state: dict):
-    """
-    Routing logic from ATLAS.
-
-    Priority order:
-    1. Termination
-    2. Reference resolution
-    3. Execution
-    """
-
     if state.get("terminated"):
         return END
 
-    if (
-        state.get("needs_reference_resolution")
-        and not state.get("resolution_ambiguous")
-    ):
-        return "iris"
+    obj = state.get("objective")
 
+    # 🔒 NEVER allow IRIS if concrete identity exists
+    if obj:
+        target = obj.get("target", {})
+        filt = target.get("filter", {})
 
-    if state.get("objective") is not None:
+        if (
+            state.get("needs_reference_resolution")
+            and not filt  # 🔒 only if NO concrete id
+            and not obj.get("_resolution_ambiguous")
+        ):
+            return "iris"
+
         return "nemesis"
 
     return END
+
 
 
 

@@ -67,7 +67,15 @@ class ListRecentEmailsTool:
     # --------------------------------------------------
 
     def run(self, args: Dict[str, Any]) -> List[Dict[str, Any]]:
-        limit = int(args["limit"]) if "limit" in args else 10
+        """
+        args is expected to contain:
+        - limit (optional)
+        - target.filter (optional, enforced locally)
+        """
+        limit = int(args.get("limit", 10))
+
+        target = args.get("target", {})
+        filters = target.get("filter", {})
 
         response = (
             self.service.users()
@@ -112,17 +120,40 @@ class ListRecentEmailsTool:
 
             date_info = self._normalize_gmail_date(internal_date)
 
-            emails.append(
-                {
-                    "id": msg_id,
-                    "label": subject,
-                    "from": sender,
-                    "date": date_info,   # 🔒 structured, canonical
-                    "source": "email",
-                }
-            )
+            email = {
+                "id": msg_id,
+                "label": subject,
+                "from": sender,
+                "date": date_info,
+                "source": "email",
+            }
+
+            # --------------------------------------------------
+            # 🔒 APPLY DISCOVERY FILTERS (CRITICAL)
+            # --------------------------------------------------
+
+            sender_filter = filters.get("sender")
+            if sender_filter:
+                if sender_filter.lower() not in sender.lower():
+                    continue
+
+            brand_filter = filters.get("brand")
+            if brand_filter:
+                if brand_filter.lower() not in sender.lower():
+                    continue
+
+            date_filter = filters.get("date")
+            if date_filter:
+                # expects "Dec 23"
+                if date_filter != date_info.get("local_day_label"):
+                    continue
+
+            keywords = filters.get("keywords")
+            if keywords:
+                haystack = f"{subject} {sender}".lower()
+                if not all(k.lower() in haystack for k in keywords):
+                    continue
+
+            emails.append(email)
 
         return emails
-
-
- 

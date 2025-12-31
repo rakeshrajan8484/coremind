@@ -1,382 +1,306 @@
 from typing import Dict, Any
 import json
-from langchain_core.messages import AIMessage, SystemMessage, HumanMessage
+import uuid
 
+from langchain_core.messages import AIMessage, SystemMessage, HumanMessage
 from coremind.llms.factory import LLMFactory
 from coremind.agents.atlas.prompt import (
     ATLAS_PLANNER_PROMPT,
-    ATLAS_RESPONSE_PROMPT,
     DISCOVERY_PLANNER_PROMPT,
 )
 from coremind.logging import get_logger
 from coremind.objectives.registry import OBJECTIVE_REGISTRY
 
 log = get_logger("ATLAS")
-
 planner_llm = LLMFactory.atlas()
-summary_llm = LLMFactory.atlasSummary()
 
 
-# -------------------------------------------------
-# 🔎 Reference extraction (IRIS-safe)
-# -------------------------------------------------
-def extract_reference_text(intent: str) -> str | None:
-    text = intent.lower()
-    if "email" in text:
-        text = text.split("email", 1)[1]
+# --------------------------------------------------
+# 🔧 Utilities
+# --------------------------------------------------
+def _parse_json(content: str) -> Dict[str, Any]:
+    return json.loads(
+        content[content.find("{"): content.rfind("}") + 1]
+    )
 
-    for stop in [
-        "summarize",
-        "mark",
-        "delete",
-        "remove",
-        "as read",
-        "as unread",
-    ]:
-        text = text.replace(stop, "")
 
-    return text.strip() or None
+def _apply_hard_constraints(
+    candidates: list[Dict[str, Any]],
+    constraints: Dict[str, Any] | None,
+) -> list[Dict[str, Any]]:
+    if not constraints:
+        return candidates
 
-def objective_signature(obj: Dict[str, Any]) -> str:
-    return json.dumps(obj, sort_keys=True)
+    filtered = candidates
 
-# -------------------------------------------------
-# 🧠 ATLAS NODE
-# -------------------------------------------------
+    if "date" in constraints:
+        target = constraints["date"].strip().lower()
+
+        def _match_date(c):
+            return (
+                c.get("date", {})
+                 .get("local_day_label", "")
+                 .strip()
+                 .lower()
+                == target
+            )
+
+        filtered = [c for c in filtered if _match_date(c)]
+
+    return filtered
+
+
+def _build_reference(obj: Dict[str, Any]) -> str:
+    return json.dumps({
+        **obj.get("target", {}).get("filter", {}),
+        **(obj.get("constraints") or {}),
+    })
+
+
+# --------------------------------------------------
+# 🧠 ATLAS NODE (CONTRACT SAFE)
+# --------------------------------------------------
 def atlas_node(state: Dict[str, Any]) -> Dict[str, Any]:
     log.info("Entered ATLAS node with state: %s", state)
 
-    # -------------------------------------------------
-    # 🛑 Hard termination guard
-    # -------------------------------------------------
+    messages = state.get("messages")
+    if not messages:
+        raise RuntimeError("Contract violation: messages missing")
+
+    # --------------------------------------------------
+    # 🛑 HARD TERMINATION
+    # --------------------------------------------------
     if state.get("terminated"):
         return state
 
-    messages = state.get("messages", [])
+    # --------------------------------------------------
+    # 🧠 ALWAYS USE LATEST UTTERANCE (CHAT MODE)
+    # --------------------------------------------------
+    last = next(m for m in reversed(messages) if isinstance(m, HumanMessage))
+    state["utterance"] = last.content
+
+    utterance = state["utterance"]
+    current_obj = state.get("objective")
     result = state.get("result")
 
-    if not messages:
-        raise ValueError("CoreMind contract violation: messages missing")
+    state.setdefault("objective_queue", [])
 
-    # -------------------------------------------------
-    # 0️⃣ Capture intent ONCE
-    # -------------------------------------------------
-    if "intent" not in state:
-        last = next(m for m in reversed(messages) if isinstance(m, HumanMessage))
-        state["intent"] = last.content
-        log.info("Captured intent: %s", state["intent"])
-
-    intent = state["intent"]
-
-    # =================================================
-    # 1️⃣ CONSUME NEMESIS RESULT
-    # =================================================
+    # ==================================================
+    # 1️⃣ CONSUME NEMESIS / IRIS RESULT
+    # ==================================================
     if result is not None:
-        log.info("Result in atlas: %s", result)
         artifacts = result.get("artifacts", {})
+        raw = artifacts.get("raw_data", {})
 
-        # -------------------------------------------------
-        # 🔍 DISCOVERY RESULT (retrieve_candidates)
-        # -------------------------------------------------
-        if "candidates" in artifacts:
-            candidates = artifacts["candidates"]
+        # ---- persist draft id ----
+        if raw.get("status") == "drafted":
+            state["last_draft_id"] = raw.get("draft_id")
 
-            log.error("========== CANDIDATES DUMP ==========")
-            for i, c in enumerate(candidates):
-                log.error(
-                    "[%d] id=%s | from=%s | subject=%s",
-                    i,
-                    c.get("id"),
-                    c.get("from"),
-                    c.get("label"),
-                )
-            log.error("====================================")
-
-            if not candidates:
-                return {
-                    **state,
-                    "messages": messages + [
-                        AIMessage("I couldn’t find any matching email.")
-                    ],
-                    "terminated": True,
-                    "objective": None,
-                }
-
-            # -------------------------------------------------
-            # 🔑 Deterministic resolution (brand/sender)
-            # -------------------------------------------------
-
-            objective = state.get("objective")
-
-            # 🔒 Hard gate: do NOT attempt identity resolution
-            # - if objective is gone
-            # - OR if reference resolution already ran
-            if objective is None or state.get("needs_reference_resolution") is False:
-                log.info(
-                    "Skipping deterministic resolution "
-                    "(objective=%s, needs_reference_resolution=%s)",
-                    objective is not None,
-                    state.get("needs_reference_resolution"),
-                )
-            else:
-                target_filter = objective.get("target", {}).get("filter", {})
-                brand = target_filter.get("brand")
-
-                log.info("Attempting deterministic resolution via brand: %s", brand)
-
-                if brand:
-                    brand = brand.lower()
-                    matches = [
-                        c for c in candidates
-                        if brand in (c.get("from") or "").lower()
-                    ]
-
-                    if len(matches) == 1:
-                        log.info(
-                            "Resolved deterministically via brand: %s",
-                            matches[0]["id"],
-                        )
-                        return {
-                            **state,
-                            "resolved_id": matches[0]["id"],
-                            "result": None,
-                            "objective": None,
-                            "current_agent": "atlas",
-                        }
-
-
-            # Single candidate fallback
-            if len(candidates) == 1:
-                log.info("Resolved deterministically (single candidate)")
-                return {
-                    **state,
-                    "resolved_id": candidates[0]["id"],
-                    "result": None,
-                    "objective": None,
-                    "current_agent": "atlas",
-                }
-
-            # -------------------------------------------------
-            # 🧠 IRIS only if truly ambiguous
-            # -------------------------------------------------
-            if state.get("resolution_ambiguous"):
-                log.info("IRIS ambiguity already reached — not re-requesting reference resolution")
-                return {
-                    **state,
-                    "result": None,
-                    "objective": None,
-                    "current_agent": "atlas",
-                }
-
-            reference = extract_reference_text(intent)
-
-            return {
-                **state,
-                "candidates": candidates,
-                "reference": reference,
-                "needs_reference_resolution": True,
-                "result": None,
-            }
-
-        # -------------------------------------------------
-        # 🗑️ DESTRUCTIVE ACTION TERMINATION (DELETE / MARK)
-        # -------------------------------------------------
-        if result.get("status") == "success" and state.get("resolved_id"):
-            log.info("Destructive action completed — terminating")
-            state.pop("last_objective_signature", None)
+        # ---- SUCCESS → continue chat (NO termination) ----
+        if result.get("status") == "success":
             return {
                 **state,
                 "messages": messages + [
-                    AIMessage("The action has been completed successfully.")
+                    AIMessage(result.get("summary", "Action completed successfully."))
                 ],
-                "terminated": True,
                 "objective": None,
+                "objective_queue": [],
+                "result": None,
                 "current_agent": "atlas",
             }
 
-        # -------------------------------------------------
-        # 📄 CONTENT RESULT (summarize / read)
-        # -------------------------------------------------
-        raw = artifacts.get("raw_data")
-        summary = result.get("summary")
-        # -------------------------------------------------
-        # 🛑 HARD STOP: resolved objective requiring identity
-        # -------------------------------------------------
-        if state.get("resolved_id") and state.get("objective") is None:
-            log.info(
-                "Resolved ID present (%s) and no pending objective — executing directly",
-                state["resolved_id"],
-            )
+        # ---- FAILURE → terminal ----
+        return {
+            **state,
+            "messages": messages + [
+                AIMessage(result.get("summary", "Action failed."))
+            ],
+            "objective": None,
+            "objective_queue": [],
+            "terminated": True,
+        }
 
-            # Reconstruct objective ONCE with resolved ID
-            planner_response = planner_llm.invoke(
-                [
-                    SystemMessage(content=ATLAS_PLANNER_PROMPT),
-                    HumanMessage(
-                        content=f"{intent}\nResolved target ID: {state['resolved_id']}"
-                    ),
-                ]
-            )
-
-            obj = json.loads(
-                planner_response.content[
-                    planner_response.content.find("{"):
-                    planner_response.content.rfind("}") + 1
-                ]
-            )
-
-            obj.setdefault("target", {}).setdefault("filter", {})["id"] = state["resolved_id"]
-
-            sig = objective_signature(obj)
-
-            if state.get("last_objective_signature") == sig:
-                log.info("Objective unchanged — stopping replanning to avoid loop")
-                return {
-                    **state,
-                    "objective": None,
-                    "current_agent": "atlas",
-                }
-
-            return {
-                **state,
-                "objective": obj,
-                "last_objective_signature": sig,
-                "current_agent": "nemesis",
-            }
-
-
-        if raw:
-            response = planner_llm.invoke(
-                [
-                    SystemMessage(content=ATLAS_RESPONSE_PROMPT),
-                    *messages,
-                    AIMessage(content=f"OBSERVATION: {raw}"),
-                    HumanMessage(content=intent),
-                ]
-            )
-            final = response.content.strip()
-        else:
-            final = summary_llm.invoke(
-                [HumanMessage(content=summary)]
-            ).content.strip()
+    # ==================================================
+    # 🚫 AMBIGUOUS IRIS RESULT → TERMINATE
+    # ==================================================
+    if current_obj and current_obj.get("_resolution_ambiguous"):
+        alts = current_obj.get("_ambiguous_candidates", [])
+        msg = "Multiple matching emails were found. Please specify which one:\n"
+        for a in alts:
+            msg += f"- {a['entity_id']}\n"
 
         return {
             **state,
-            "messages": messages + [AIMessage(final)],
-            "terminated": True,
+            "messages": messages + [AIMessage(msg)],
             "objective": None,
-            "current_agent": "atlas",
+            "objective_queue": [],
+            "terminated": True,
         }
 
-    # =================================================
-    # 2️⃣ RESOLVED ID → REPLAN (NO DISCOVERY)
-    # =================================================
-    if state.get("resolved_id"):
-        rid = state["resolved_id"]
-        log.info("Resolved ID present (%s) — replanning", rid)
+    # ==================================================
+    # 🔒 SEND_DRAFT: NEVER GO TO IRIS (CRITICAL FIX)
+    # ==================================================
+    if current_obj and current_obj.get("intent") == "send_draft":
+        # 🔒 hard purge IRIS-related state
+        for k in [
+            "needs_reference_resolution",
+            "reference",
+            "_resolution_none",
+            "_resolution_ambiguous",
+            "_ambiguous_candidates",
+            "candidates",
+        ]:
+            state.pop(k, None)
 
-        intent_with_id = f"{intent}\nResolved target ID: {rid}"
+        # 🔒 bind draft id if missing
+        target = current_obj.setdefault("target", {})
+        filt = target.setdefault("filter", {})
+
+        if "draft_id" not in filt:
+            draft_id = state.get("last_draft_id")
+            if not draft_id:
+                raise RuntimeError("No drafted email available to send")
+            filt["draft_id"] = draft_id
+
+        current_obj["_discovery_planned"] = True
+
+        return {
+            **state,
+            "objective": current_obj,
+            "current_agent": "nemesis",
+            "result": None,
+        }
+
+    # ==================================================
+    # 2️⃣ PROMOTE RESOLVED DISCOVERY → EXECUTION
+    # ==================================================
+    if current_obj and current_obj.get("_resolved_id"):
+        rid = current_obj["_resolved_id"]
 
         planner_response = planner_llm.invoke(
             [
-                SystemMessage(content=ATLAS_PLANNER_PROMPT),
-                HumanMessage(content=intent_with_id),
+                SystemMessage(ATLAS_PLANNER_PROMPT),
+                HumanMessage(f"{current_obj['_intent']}\nResolved target ID: {rid}"),
             ]
         )
 
-        obj = json.loads(
-            planner_response.content[
-                planner_response.content.find("{"):
-                planner_response.content.rfind("}") + 1
-            ]
-        )
+        raw = _parse_json(planner_response.content)
+        exec_obj = raw["objectives"][0]
 
-        obj.setdefault("target", {}).setdefault("filter", {})["id"] = rid
+        exec_obj["_objective_id"] = str(uuid.uuid4())
+        exec_obj["_intent"] = current_obj["_intent"]
+        exec_obj.setdefault("target", {}).setdefault("filter", {})["id"] = rid
+
+        # 🔒 clear resolution state
+        for k in [
+            "_resolved_id",
+            "_resolution_none",
+            "_resolution_ambiguous",
+            "_ambiguous_candidates",
+            "candidates",
+            "needs_reference_resolution",
+            "reference",
+        ]:
+            state.pop(k, None)
+
+        state["objective_queue"] = []
 
         return {
             **state,
-            "objective": obj,
+            "objective": exec_obj,
             "current_agent": "nemesis",
+            "result": None,
         }
 
-    # =================================================
+    # ==================================================
     # 3️⃣ INITIAL PLANNING
-    # =================================================
-    planner_response = planner_llm.invoke(
-        [
-            SystemMessage(content=ATLAS_PLANNER_PROMPT),
-            HumanMessage(content=intent),
-        ]
-    )
-
-    obj = json.loads(
-        planner_response.content[
-            planner_response.content.find("{"):
-            planner_response.content.rfind("}") + 1
-        ]
-    )
-
-    spec = OBJECTIVE_REGISTRY.get((obj.get("domain"), obj.get("intent")))
-
-    # =================================================
-    # 4️⃣ DISCOVERY ONLY IF ID REQUIRED AND NOT RESOLVED
-    # =================================================
-    if (
-        spec
-        and spec.requires_concrete_identity
-        and state.get("needs_reference_resolution") is not False
-        and not state.get("resolution_ambiguous")
-    ):
-        log.info("Concrete identity required — starting discovery")
-
-        discovery_response = planner_llm.invoke(
+    # ==================================================
+    if not current_obj and not state["objective_queue"]:
+        planner_response = planner_llm.invoke(
             [
-                SystemMessage(content=DISCOVERY_PLANNER_PROMPT),
-                HumanMessage(content=intent),
+                SystemMessage(ATLAS_PLANNER_PROMPT),
+                HumanMessage(utterance),
             ]
         )
 
-        raw = json.loads(
-            discovery_response.content[
-                discovery_response.content.find("{"):
-                discovery_response.content.rfind("}") + 1
-            ]
-        )
+        raw = _parse_json(planner_response.content)
+        objectives = raw.get("objectives")
+
+        if not objectives:
+            raise RuntimeError("Planner contract violation: objectives[] required")
+
+        for o in objectives:
+            o["_objective_id"] = str(uuid.uuid4())
+            o["_intent"] = o["intent_text"]
+            o["_discovery_planned"] = False
+
+            # 🔒 bind draft id early for send_draft
+            if o.get("intent") == "send_draft":
+                draft_id = state.get("last_draft_id")
+                if not draft_id:
+                    raise RuntimeError("No drafted email available to send")
+                o.setdefault("target", {}).setdefault("filter", {})[
+                    "draft_id"
+                ] = draft_id
+
+            state["objective_queue"].append(o)
 
         return {
             **state,
-            "objective": {
-                "domain": "entity",
-                "intent": "retrieve_candidates",
-                "target": raw["target"],
-                "operation": {"type": "retrieve", "value": "candidates"},
-                "constraints": {
-                    "limit": 10,
-                    "discovery_scope": "recent_any",
-                },
-            },
-            "current_agent": "nemesis",
-        }
-
-     
-    # =================================================
-    # 5️⃣ DIRECT EXECUTION (ONLY IF EXECUTABLE)
-    # =================================================
-
-    # 🔒 If identity is required but not resolved, do NOT send to Nemesis
-    if spec and spec.requires_concrete_identity and not state.get("resolved_id"):
-        log.info(
-            "Objective requires concrete identity but none resolved — stopping Atlas"
-        )
-        return {
-            **state,
-            "objective": None,
+            "objective": state["objective_queue"].pop(0),
             "current_agent": "atlas",
         }
 
-    return {
-        **state,
-        "objective": obj,
-        "current_agent": "nemesis",
-    }
+    # ==================================================
+    # 4️⃣ DISCOVERY PLANNING (NON-CREATE ONLY)
+    # ==================================================
+    if current_obj and not current_obj.get("_discovery_planned"):
+        spec = OBJECTIVE_REGISTRY.get(
+            (current_obj.get("domain"), current_obj.get("intent"))
+        )
 
+        if spec and spec.requires_concrete_identity:
+            discovery_response = planner_llm.invoke(
+                [
+                    SystemMessage(DISCOVERY_PLANNER_PROMPT),
+                    HumanMessage(current_obj["_intent"]),
+                ]
+            )
+
+            raw = _parse_json(discovery_response.content)
+
+            for d in raw.get("discoveries", []):
+                state["objective_queue"].append({
+                    "_objective_id": str(uuid.uuid4()),
+                    "_intent": current_obj["_intent"],
+                    "domain": "entity",
+                    "intent": "retrieve_candidates",
+                    "target": d["target"],
+                    "operation": {"type": "retrieve", "value": "candidates"},
+                    "constraints": {
+                        **d.get("constraints", {}),
+                        "discovery_scope": "recent_any",
+                    },
+                })
+
+            current_obj["_discovery_planned"] = True
+
+            return {
+                **state,
+                "objective": state["objective_queue"].pop(0),
+                "current_agent": "nemesis",
+                "result": None,
+            }
+
+    # ==================================================
+    # 5️⃣ FINAL DISPATCH
+    # ==================================================
+    if current_obj:
+        return {
+            **state,
+            "objective": current_obj,
+            "current_agent": "nemesis",
+            "result": None,
+        }
+
+    return state

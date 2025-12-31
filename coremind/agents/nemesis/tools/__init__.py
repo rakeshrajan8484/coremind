@@ -5,6 +5,8 @@ from coremind.agents.nemesis.tools.gmail.get_email_content import GetEmailConten
 from coremind.agents.nemesis.tools.gmail.delete_email import DeleteEmailTool
 from coremind.agents.nemesis.tools.gmail.mark_email import MarkEmailTool
 from coremind.agents.nemesis.tools.gmail.mark_all_read import MarkAllReadTool
+from coremind.agents.nemesis.tools.gmail.compose_email import ComposeEmailTool
+from coremind.agents.nemesis.tools.gmail.send_draft import SendDraftTool
 
 import coremind.agents.nemesis.tools 
 from coremind.agents.nemesis.tools.registry import TOOL_REGISTRY
@@ -17,6 +19,8 @@ TOOL_REGISTRY.register(DeleteEmailTool(gmail_service))
 TOOL_REGISTRY.register(MarkEmailTool(gmail_service))
 TOOL_REGISTRY.register(MarkAllReadTool(gmail_service))
 TOOL_REGISTRY.register(ListRecentEmailsTool(gmail_service))
+TOOL_REGISTRY.register(ComposeEmailTool(gmail_service))
+TOOL_REGISTRY.register(SendDraftTool(gmail_service))
 __all__ = [
     "CheckUnreadTool",
     "GetEmailContentTool",
@@ -24,4 +28,6 @@ __all__ = [
     "MarkEmailTool",
     "MarkAllReadTool",
     "ListRecentEmailsTool",
+    "ComposeEmailTool",
+    "SendDraftTool",
 ]

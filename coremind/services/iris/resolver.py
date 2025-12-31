@@ -1,49 +1,13 @@
-# coremind/services/iris/resolver.py
-
 import json
 import re
 from typing import Dict, Any, List, Optional
 from langchain_core.messages import SystemMessage, HumanMessage
 from coremind.llms.factory import LLMFactory
 from coremind.logging import get_logger
+from coremind.services.iris.prompt import IRIS_PROMPT
 
 log = get_logger("IRIS")
 
-# ==================================================
-# 🔒 IRIS SYSTEM PROMPT (STRICT CONTRACT)
-# ==================================================
-
-IRIS_PROMPT = """
-You are IRIS, a deterministic reference resolution service.
-
-Your ONLY responsibility:
-- Resolve a natural language reference to ONE entity_id from the given candidates.
-
-STRICT RULES (VIOLATION = FAILURE):
-- You MUST choose entity_id ONLY from the provided candidates.
-- You MUST return null if no candidate clearly matches.
-- You MUST NOT invent, infer, or modify entity_ids.
-- You MUST prioritize explicit signals:
-  1. Dates (Nov 5, yesterday, last Monday)
-  2. Sender / source (LinkedIn, Adobe, GitHub)
-  3. Subject keywords
-- If multiple candidates partially match, return them as alternatives.
-
-You do NOT:
-- Decide what happens next
-- Execute tools
-- Ask the user questions
-
-Return JSON ONLY in the following schema:
-
-{
-  "resolved_to": "<entity_id or null>",
-  "confidence": <float between 0 and 1>,
-  "alternatives": [
-    {"entity_id": "<id>", "confidence": <float>}
-  ]
-}
-"""
 
 # ==================================================
 # 🔒 SAFE JSON EXTRACTION
@@ -57,30 +21,40 @@ def extract_json_object(text: str) -> dict:
         raise ValueError("IRIS did not return JSON")
 
     raw = text[start:end + 1]
-
-    # Normalize illegal floats like 00.25
     raw = re.sub(r":\s*00\.(\d+)", r": 0.\1", raw)
 
     return json.loads(raw)
 
+
 # ==================================================
-# 🧠 IRIS RESOLVER (PURE, STATELESS)
+# 🧠 IRIS RESOLVER (STRICT, CONSERVATIVE)
 # ==================================================
 
 class IrisResolver:
     """
     IRIS = reference resolution only.
 
-    - Stateless
-    - Deterministic
-    - No side effects
+    STRICT RULES:
+    - Never invent
+    - Never broaden
+    - Fail fast on ambiguity
     """
+
+    VERBS = {
+        "mark", "delete", "remove", "open", "read", "unread",
+        "show", "summarize", "get", "fetch"
+    }
+
+    STOPWORDS = {
+        "from", "the", "email", "mail", "message",
+        "an", "a", "to", "of", "in", "on", "as"
+    }
 
     def __init__(self):
         self.llm = LLMFactory.iris()
 
     # --------------------------------------------------
-    # 🔒 Structured deterministic resolution
+    # 🔒 Constraint extraction (signals only)
     # --------------------------------------------------
 
     def _extract_constraints(self, reference: str) -> Dict[str, Any]:
@@ -92,24 +66,18 @@ class IrisResolver:
             "local_date": None,
         }
 
-        # ----------------------------
-        # Sender / provider keywords
-        # ----------------------------
-        STOPWORDS = {
-            "from", "the", "email", "mail", "message",
-            "delete", "remove", "open", "show", "latest",
-            "an", "a", "to", "of", "in"
-        }
-
         tokens = re.findall(r"[a-z0-9]+", ref)
 
-        keywords = [t for t in tokens if t not in STOPWORDS and len(t) > 2]
+        keywords = [
+            t for t in tokens
+            if t not in self.STOPWORDS
+            and t not in self.VERBS
+            and len(t) > 2
+        ]
 
         constraints["sender_keywords"] = keywords
 
-        # ----------------------------
-        # Date extraction (Dec 30)
-        # ----------------------------
+        # Date extraction (Dec 23)
         m = re.search(
             r"(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\s+(\d{1,2})",
             ref,
@@ -125,42 +93,38 @@ class IrisResolver:
 
         return constraints
 
+    # --------------------------------------------------
+    # 🔒 Structured resolution ONLY
+    # --------------------------------------------------
 
     def _resolve_structured(
         self,
         reference: str,
         candidates: List[Dict[str, Any]],
+        selector: str,
     ) -> Optional[Dict[str, Any]]:
 
         constraints = self._extract_constraints(reference)
-
         scored = []
 
         for c in candidates:
             score = 0
-
             sender = (c.get("from") or "").lower()
             subject = (c.get("label") or "").lower()
 
-            # ----------------------------
-            # Sender keyword match
-            # ----------------------------
             for kw in constraints["sender_keywords"]:
                 if kw in sender:
-                    score += 2
-                if kw in subject:
+                    score += 3
+                elif kw in subject:
                     score += 1
 
-            # ----------------------------
-            # Date match
-            # ----------------------------
             if constraints["local_date"]:
                 month, day = constraints["local_date"]
                 c_date = c.get("date", {}).get("local_date")
                 if c_date:
                     _, c_month, c_day = c_date.split("-")
                     if c_month == month and int(c_day) == day:
-                        score += 3
+                        score += 4
 
             if score > 0:
                 scored.append((score, c))
@@ -169,14 +133,24 @@ class IrisResolver:
             return None
 
         scored.sort(key=lambda x: x[0], reverse=True)
-
         top_score = scored[0][0]
-        top_matches = [c for s, c in scored if s == top_score]
+        top = [c for s, c in scored if s == top_score]
 
-        if len(top_matches) == 1:
+        # 🔒 selector=single MUST be exact
+        if selector == "single":
+            if len(top) == 1:
+                return {
+                    "resolved_to": top[0]["id"],
+                    "confidence": 1.0,
+                    "alternatives": [],
+                }
+            return None
+
+        # subset / all may allow ambiguity
+        if len(top) == 1:
             return {
-                "resolved_to": top_matches[0]["id"],
-                "confidence": min(1.0, top_score / 5),
+                "resolved_to": top[0]["id"],
+                "confidence": min(1.0, top_score / 6),
                 "alternatives": [],
             }
 
@@ -185,19 +159,19 @@ class IrisResolver:
             "confidence": 0.5,
             "alternatives": [
                 {"entity_id": c["id"], "confidence": 0.5}
-                for c in top_matches
+                for c in top
             ],
         }
 
-
     # --------------------------------------------------
-    # 🔒 Main resolve entry point
+    # 🔒 Main entry point
     # --------------------------------------------------
 
     def resolve(
         self,
         reference: str,
         candidates: List[Dict[str, Any]],
+        selector: str = "single",
     ) -> Dict[str, Any]:
 
         if not reference or not candidates:
@@ -207,101 +181,82 @@ class IrisResolver:
                 "alternatives": [],
             }
 
-        # --- 1️⃣ Structured resolution FIRST ---
-        structured = self._resolve_structured(reference, candidates)
+        structured = self._resolve_structured(
+            reference=reference,
+            candidates=candidates,
+            selector=selector,
+        )
+
         if structured is not None:
             log.warning("IRIS STRUCTURED RESOLUTION: %s", structured)
             return structured
 
-        # --- 2️⃣ LLM fallback ---
-        candidate_ids = {c["id"] for c in candidates if "id" in c}
-
-        payload = {
-            "reference": reference,
-            "candidates": [
-                {
-                    "entity_id": c.get("id"),
-                    "from": c.get("from"),
-                    "subject": c.get("label"),
-                    "date": c.get("date"),
-                }
-                for c in candidates
-            ],
-        }
-
-        response = self.llm.invoke(
-            [
-                SystemMessage(content=IRIS_PROMPT),
-                HumanMessage(content=json.dumps(payload)),
-            ]
-        )
-
-        log.warning("IRIS RAW OUTPUT:\n%s", response.content)
-
-        data = extract_json_object(response.content)
-
-        resolved_to = data.get("resolved_to")
-        confidence = float(data.get("confidence", 0.0))
-        alternatives = data.get("alternatives", [])
-
-        # --- Post-validation ---
-        if resolved_to not in candidate_ids:
-            resolved_to = None
-            confidence = 0.0
-
-        valid_alternatives = []
-        for alt in alternatives:
-            eid = alt.get("entity_id")
-            if eid in candidate_ids:
-                valid_alternatives.append(
-                    {
-                        "entity_id": eid,
-                        "confidence": float(alt.get("confidence", 0.0)),
-                    }
-                )
-
+        # 🔒 NO LLM FALLBACK if structured score == 0
         return {
-            "resolved_to": resolved_to,
-            "confidence": confidence,
-            "alternatives": valid_alternatives,
+            "resolved_to": None,
+            "confidence": 0.0,
+            "alternatives": [],
         }
+
 
 # ==================================================
-# 🔁 LANGGRAPH NODE (STATE TRANSFORMER ONLY)
+# 🔁 LANGGRAPH NODE
 # ==================================================
 
 def iris_node(state: Dict[str, Any]) -> Dict[str, Any]:
     log.warning(
-        "IRIS NODE | reference=%s | candidates=%d",
+        "IRIS RESOLVING | objective=%s | reference=%s",
+        state.get("objective", {}).get("_intent"),
         state.get("reference"),
-        len(state.get("candidates", [])),
     )
+
+
+    objective = state.get("objective")
+    if not objective:
+        return {
+            **state,
+            "needs_reference_resolution": False,
+            "resolution_error": "IRIS called without objective",
+        }
 
     resolver = IrisResolver()
 
     result = resolver.resolve(
         reference=state.get("reference"),
         candidates=state.get("candidates", []),
+        selector=objective.get("target", {}).get("selector", "single"),
     )
 
+    # NEVER leak resolution globally
+    state.pop("resolved_id", None)
+
     if result["resolved_to"]:
-        log.warning("IRIS RESOLUTION RESULT with resolved_id: %s", result)
         return {
             **state,
-            "resolved_id": result["resolved_to"],
+            "objective": {
+                **objective,
+                "_resolved_id": result["resolved_to"],
+                "_resolution_confidence": result["confidence"],
+            },
             "needs_reference_resolution": False,
         }
 
     if result["alternatives"]:
         return {
             **state,
-            "resolution_ambiguous": True,
-            "ambiguous_candidates": result["alternatives"],
+            "objective": {
+                **objective,
+                "_resolution_ambiguous": True,
+                "_ambiguous_candidates": result["alternatives"],
+            },
             "needs_reference_resolution": False,
         }
 
     return {
         **state,
-        "resolution_none": True,
+        "objective": {
+            **objective,
+            "_resolution_none": True,
+        },
         "needs_reference_resolution": False,
     }
