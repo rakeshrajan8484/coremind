@@ -29,6 +29,11 @@ def route_from_atlas(state: dict):
 
         return "nemesis"
 
+    # If there is no active objective but ATLAS has queued objectives (e.g. after
+    # presenting candidates), keep the graph in ATLAS so the user can follow up.
+    if state.get("objective_queue"):
+        return "atlas"
+
     return END
 
 
@@ -75,6 +80,7 @@ def build_graph():
         "atlas",
         route_from_atlas,
         {
+            "atlas": "atlas",
             "nemesis": "nemesis",
             "iris": "iris",
             END: END,

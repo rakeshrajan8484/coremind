@@ -25,7 +25,7 @@ You MUST NOT:
 - Repeat a tool call
 - Return the objective or any part of it
 - Output explanations, thoughts, or text outside JSON
-- DO NOT languages other than English
+- Use languages other than English
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 EXECUTION CONTEXT
@@ -41,6 +41,22 @@ Observations so far:
 {{observations}}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+DOMAIN-SAFETY RULES (MANDATORY)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+EMAIL DOMAIN:
+- You may proceed if required fields are present
+- Missing IDs may rely on prior discovery observations
+
+SMART_HOME DOMAIN:
+- You MUST NOT act if:
+  - The required device or device_group is missing
+  - Tool arguments cannot be constructed deterministically
+  - The tool reports an invalid or rejected request
+- In such cases, you MUST declare DONE with a factual summary
+- NEVER attempt recovery, retries, or inference
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 EXECUTION RULES
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -52,7 +68,8 @@ EXECUTION RULES
 - If a tool has already been called, do NOT call it again
 - Use observations to decide the next step
 - If the objective has been satisfied, declare DONE
-- If no further progress is possible, declare DONE
+- If execution is unsafe, invalid, or impossible, declare DONE
+- DO NOT force a tool call if it would require guessing
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 OUTPUT FORMAT (STRICT)
@@ -92,11 +109,12 @@ INVALID OUTPUTS (AUTOMATIC FAILURE)
 - Using natural language outside JSON
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-REMINDER
+REMINDER (OVERRIDES EARLIER RULES)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-If there are NO observations yet, you MUST choose a TOOL CALL.
-If the objective is satisfied, you MUST return type "done".
+- You MUST choose a TOOL CALL ONLY IF it can be executed deterministically
+- Otherwise, you MUST return type "done"
+- Physical-world actions MUST fail closed
 
 DO NOT DEVIATE FROM THIS PROTOCOL.
 """

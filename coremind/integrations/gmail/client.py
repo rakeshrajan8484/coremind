@@ -4,6 +4,7 @@ import pickle
 from googleapiclient.discovery import build
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
+from google.auth.exceptions import RefreshError
 
 SCOPES = ["https://www.googleapis.com/auth/gmail.modify"]
 
@@ -28,12 +29,19 @@ def get_gmail_service():
         if not creds.scopes or not set(SCOPES).issubset(set(creds.scopes)):
             creds = None
 
-
+    # --------------------------------------------------
+    # 🔒 Ensure valid credentials
+    # --------------------------------------------------
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
-            # ⚠️ Refresh will NOT upgrade scopes
-            creds.refresh(Request())
-        else:
+            try:
+                # ⚠️ Refresh will NOT upgrade scopes
+                creds.refresh(Request())
+            except RefreshError:
+                # 🔥 Token is dead → force full re-auth
+                creds = None
+
+        if not creds:
             flow = InstalledAppFlow.from_client_secrets_file(
                 CREDS_PATH,
                 SCOPES,
@@ -50,7 +58,9 @@ def get_gmail_service():
         with open(TOKEN_PATH, "wb") as token:
             pickle.dump(creds, token)
 
+    # --------------------------------------------------
     # 🔒 HARD SAFETY CHECK
+    # --------------------------------------------------
     if "https://www.googleapis.com/auth/gmail.modify" not in creds.scopes:
         raise RuntimeError(
             f"Gmail modify scope NOT granted. Actual scopes: {creds.scopes}"

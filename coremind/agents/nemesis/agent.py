@@ -10,11 +10,9 @@ from coremind.logging import get_logger
 log = get_logger("NEMESIS")
 
 
-# --------------------------------------------------
-# 🔒 Single-shot (terminal) objectives
-# --------------------------------------------------
 TERMINAL_INTENTS = {
     ("email", "update_read_state"),
+    ("email", "update_bulk_read_state"),
     ("email", "delete_message"),
     ("email", "summarize"),
     ("email", "compose_message"),
@@ -26,40 +24,16 @@ class NemesisAgent:
     """
     Execution-only agent.
 
+    CONTRACT:
     - No planning
-    - No semantic resolution
-    - Deterministic execution
+    - No reference resolution
+    - No user-facing language
+    - Deterministic execution only
     """
 
     def __init__(self):
         self.llm = LLMFactory.nemesis()
         self.tools = TOOL_REGISTRY
-
-    def _extract_concrete_id(
-        self, objective: Dict[str, Any], state: Dict[str, Any]
-    ) -> str | None:
-        """
-        Canonical identity extraction.
-        Supports IRIS resolution and domain-specific IDs.
-        """
-
-        if state.get("resolved_id"):
-            return state["resolved_id"]
-
-        target = objective.get("target") or {}
-        filter_ = target.get("filter") or {}
-        entity = target.get("entity")
-
-        if entity == "draft":
-            return filter_.get("draft_id")
-
-        if entity == "message":
-            return filter_.get("id")
-
-        if entity == "thread":
-            return filter_.get("thread_id")
-
-        return None
 
     # --------------------------------------------------
     # Public entry
@@ -68,35 +42,105 @@ class NemesisAgent:
         self._reset_run_state()
         self._validate_state(state)
 
-        objective = state["objective"]
+        self.state = state
+        self.current_objective = state["objective"]
+
+        objective = self.current_objective
         domain = objective.get("domain")
         intent = objective.get("intent")
 
-        # --------------------------------------------------
-        # 🔒 CANONICAL ID NORMALIZATION
-        # --------------------------------------------------
         resolved_id = self._extract_concrete_id(objective, state)
 
+        # --------------------------------------------------
+        # HARD TERMINALS (NO LLM)
+        # --------------------------------------------------
+        if (domain, intent) == ("smart_home", "switch_power"):
+            tool = self.tools.get("smart_home_control")
 
-        # --------------------------------------------------
-        # 🔒 HARD TERMINAL: candidate retrieval
-        # --------------------------------------------------
+            if not tool:
+                raise RuntimeError(f"No tool registered for intent: {intent}")
+
+            # 1. Build args from constraints
+            constraints = objective.get("constraints")
+            if not isinstance(constraints, dict):
+                raise ValueError("SMART_HOME constraints must be a dict")
+
+            args = dict(constraints)
+
+            # 2. Merge allowed target.filter fields
+            target_filter = objective.get("target", {}).get("filter", {}) or {}
+            allowed_args = set(tool.args_schema.keys())
+
+            for k, v in target_filter.items():
+                if k in allowed_args:
+                    args.setdefault(k, v)
+
+            # 3. Enforce semantic completeness
+            if args.get("action") not in {"switch_on", "switch_off", "toggle"}:
+                raise ValueError(f"Invalid smart_home action: {args.get('action')}")
+
+            # 4. Validate args
+            self.tools.validate_args(tool.name, args)
+
+            # 5. Enforce terminal invariant
+            if tool.terminal is not True:
+                raise RuntimeError("SmartHomeControlTool must be terminal")
+
+            log.warning(
+                "NEMESIS TOOL CALL | tool=%s | args=%r",
+                tool.name,
+                args,
+            )
+
+            result = tool.run(args)
+
+            return {
+                "status": "success",
+                "artifacts": {
+                    "raw_data": result,
+                    "force_done": bool(result.get("terminal", False)),
+                },
+            }
+
+
         if (domain, intent) == ("entity", "retrieve_candidates"):
-            log.info("NEMESIS handling retrieve_candidates (terminal)")
             candidates = self._retrieve_candidates(objective)
             return {
                 "status": "success",
-                "summary": "Candidates retrieved",
                 "artifacts": {"candidates": candidates},
             }
 
-        # --------------------------------------------------
-        # 🔒 HARD TERMINAL: CREATE (NO LLM, NO LOOP)
-        # --------------------------------------------------
         if objective.get("operation", {}).get("type") == "create":
-            tool = self._select_create_tool(objective)
+            tool = self.tools.get(objective["intent"])
 
-            args = dict(objective.get("constraints") or {})
+            if not tool:
+                raise RuntimeError(
+                    f"No tool registered for intent: {objective['intent']}"
+                )
+
+            # ----------------------------
+            # 1. Build args from constraints
+            # ----------------------------
+            constraints = objective.get("constraints")
+            if isinstance(constraints, dict):
+                args = dict(constraints)
+            else:
+                raise ValueError("CREATE constraints must be a dict")
+
+            # ----------------------------
+            # 2. Merge ONLY allowed target.filter fields
+            # ----------------------------
+            target_filter = objective.get("target", {}).get("filter", {}) or {}
+
+            allowed_args = set(tool.args_schema.keys())
+
+            for k, v in target_filter.items():
+                if k in allowed_args:
+                    args.setdefault(k, v)
+
+            # ----------------------------
+            # 3. Validate & execute
+            # ----------------------------
             self.tools.validate_args(tool.name, args)
 
             log.warning(
@@ -109,174 +153,215 @@ class NemesisAgent:
 
             return {
                 "status": "success",
-                "summary": "Email draft created successfully.",
                 "artifacts": {"raw_data": result},
             }
-        # --------------------------------------------------
-        # 🔒 HARD TERMINAL: SEND DRAFT (NO LLM)
-        # --------------------------------------------------
-        if (domain, intent) == ("email", "send_draft"):
-            draft_id = resolved_id
-            if not draft_id:
-                raise ValueError("send_draft requires draft_id")
 
-            tool = self.tools.get("send_draft")
+            # 🔒 merge target.filter (execution wiring, not logic)
+            target_filter = objective.get("target", {}).get("filter", {}) or {}
+            for k, v in target_filter.items():
+                args.setdefault(k, v)
 
-            args = {"id": draft_id}
-            self.tools.validate_args("send_draft", args)
+            self.tools.validate_args(tool.name, args)
 
-            log.warning(
-                "NEMESIS TOOL CALL | tool=send_draft | args=%r",
-                args,
-            )
-
+            log.warning("NEMESIS TOOL CALL | tool=%s | args=%r", tool.name, args)
             result = tool.run(args)
 
             return {
                 "status": "success",
-                "summary": "Draft sent successfully.",
                 "artifacts": {"raw_data": result},
             }
 
-        # --------------------------------------------------
-        # 🔒 HARD CONTRACT: resolved identity required
-        # --------------------------------------------------
-        target = objective.get("target", {})
-        if target.get("selector") == "single" and not resolved_id:
-            raise ValueError(
-                "NEMESIS cannot execute objective requiring identity "
-                "without a concrete ID"
-            )
+
+        if (domain, intent) == ("email", "send_draft"):
+             
+            tool = self.tools.get("send_draft")
+            args = {"id": resolved_id}
+            self.tools.validate_args("send_draft", args)
+
+            log.warning("NEMESIS TOOL CALL | tool=send_draft | args=%r", args)
+            result = tool.run(args)
+
+            return {
+                "status": "success",
+                "artifacts": {"raw_data": result},
+            }
 
         terminal = (domain, intent) in TERMINAL_INTENTS
 
         # --------------------------------------------------
-        # Normal execution loop (LLM-driven)
+        # MAIN EXECUTION LOOP
         # --------------------------------------------------
         while True:
             step = self._decide_next_step(objective)
 
+            # Normalize the LLM-chosen step to prefer deterministic bulk tools
+            # when the objective already contains multiple ids or a sender filter.
+            if step.get("type") == "tool":
+                step = self._normalize_tool_choice(step, objective)
+
             if step["type"] == "done":
-                return self._success(
-                    step.get("summary", "Objective completed."),
-                    raw=self.observations[-1]["result"]
-                    if self.observations else None,
-                )
+                return {
+                    "status": "success",
+                    "artifacts": {},
+                }
 
             if step["type"] == "tool":
-                self._execute_tool(step, resolved_id)
+                result = self._execute_tool(step, resolved_id)
+
+                # 🔒 HARD TERMINATION (destructive tools)
+                if isinstance(result, dict):
+                    artifacts = result.get("artifacts") or {}
+                    if artifacts.get("force_done"):
+                        return {
+                            "status": "success",
+                            "artifacts": {"raw_data": result},
+                        }
 
                 if terminal:
                     last = self.observations[-1]
-                    return self._success(
-                        summary="Action completed successfully.",
-                        raw=last["result"],
-                    )
-
-    # --------------------------------------------------
-    # Run-local state
-    # --------------------------------------------------
-    def _reset_run_state(self) -> None:
-        self.observations: List[Dict[str, Any]] = []
-        self.called_tools: set[str] = set()
-
-    # --------------------------------------------------
-    # 🔒 CREATE tool selector (FIXED)
-    # --------------------------------------------------
-    def _select_create_tool(self, objective: Dict[str, Any]):
-        for name in self.tools.list():
-            tool = self.tools.get(name)
-            caps = getattr(tool, "capabilities", {})
-
-            if (
-                caps.get("domain") == objective.get("domain")
-                and caps.get("intent") == objective.get("intent")
-            ):
-                return tool
-
-        raise ValueError(
-            f"No CREATE tool registered for "
-            f"{objective.get('domain')}::{objective.get('intent')}"
-        )
-
-    # --------------------------------------------------
-    # Candidate retrieval (DISCOVERY ROUTING)
-    # --------------------------------------------------
-    def _retrieve_candidates(self, objective: Dict[str, Any]) -> List[Dict[str, Any]]:
-        constraints = objective.get("constraints") or {}
-        limit = constraints.get("limit", 10)
-        discovery_scope = constraints.get("discovery_scope", "unread_only")
-
-        tool_name = (
-            "list_recent_emails"
-            if discovery_scope == "recent_any"
-            else "check_unread"
-        )
-
-        tool = self.tools.get(tool_name)
-
-        log.warning(
-            "NEMESIS DISCOVERY | scope=%s | tool=%s | limit=%d",
-            discovery_scope,
-            tool_name,
-            limit,
-        )
-
-        raw_result = tool.run({"limit": limit})
-
-        messages = (
-            raw_result
-            if isinstance(raw_result, list)
-            else raw_result.get("messages", [])
-        )
-
-        return [email_to_candidate(m) for m in messages]
-
-    # --------------------------------------------------
-    # LLM decision
-    # --------------------------------------------------
-    def _decide_next_step(self, objective: Dict[str, Any]) -> Dict[str, Any]:
-        prompt = self._build_prompt(objective)
-        response = self.llm.invoke(prompt)
-        return self._parse_llm_step(response.content)
+                    return {
+                        "status": "success",
+                        "artifacts": {"raw_data": last["result"]},
+                    }
 
     # --------------------------------------------------
     # Tool execution (STRICT)
     # --------------------------------------------------
-    def _execute_tool(self, step: Dict[str, Any], resolved_id: str | None) -> None:
+    def _execute_tool(self, step: Dict[str, Any], resolved_id: str | None):
         tool_name = step["tool"]
-        llm_args = step.get("args", {})
+        llm_args = step.get("arguments") or step.get("args") or {}
 
         if tool_name in self.called_tools:
             raise ValueError(f"Repeated tool call blocked: {tool_name}")
 
         tool = self.tools.get(tool_name)
 
-        args = dict(llm_args)
-        if resolved_id and "id" not in args:
-            args["id"] = resolved_id
+        resolved_args = self._resolve_tool_args(
+            tool_name=tool_name,
+            step_args=llm_args,
+            objective=self.current_objective,
+            state=self.state,
+            resolved_id=resolved_id,
+        )
 
-        self.tools.validate_args(tool_name, args)
+        self.tools.validate_args(tool_name, resolved_args)
 
         log.warning(
             "NEMESIS TOOL CALL | tool=%s | args=%r",
             tool_name,
-            args,
+            resolved_args,
         )
 
-        result = tool.run(args)
+        result = tool.run(resolved_args)
 
         self.called_tools.add(tool_name)
         self.observations.append({
             "tool": tool_name,
-            "args": args,
+            "args": resolved_args,
             "result": result,
         })
 
+        return result
+
     # --------------------------------------------------
-    # Prompting
+    # Argument resolution (CORE INVARIANT)
     # --------------------------------------------------
-    def _build_prompt(self, objective: Dict[str, Any]) -> str:
+    def _resolve_tool_args(
+        self,
+        tool_name: str,
+        step_args: dict,
+        objective: dict,
+        state: dict,
+        resolved_id: str | None,
+    ) -> dict:
+
+        args = dict(step_args or {})
+        target = objective.get("target", {}) or {}
+        filter_ = target.get("filter", {}) or {}
+
+        if tool_name == "delete_emails_bulk":
+            if "sender" not in args and filter_.get("sender"):
+                args["sender"] = filter_["sender"]
+
+            if "ids" not in args:
+                ids = filter_.get("ids")
+                if isinstance(ids, list) and ids:
+                    args["ids"] = ids
+                elif resolved_id:
+                    args["ids"] = [resolved_id]
+
+            if not any(k in args for k in ("sender", "ids")):
+                raise RuntimeError(
+                    "Execution invariant violated: bulk delete without identity"
+                )
+
+        if tool_name == "mark_all_read":
+            # If caller provided some ids, merge them with objective filter ids so
+            # we don't lose targets (LLM may supply a single id while objective
+            # contains multiple resolved ids).
+            ids_in_args = args.get("ids")
+            filter_ids = filter_.get("ids")
+
+            if ids_in_args and isinstance(ids_in_args, list) and filter_ids and isinstance(filter_ids, list):
+                # merge preserving order, unique
+                merged = []
+                for x in ids_in_args + filter_ids:
+                    if x and x not in merged:
+                        merged.append(x)
+                args["ids"] = merged
+            elif "ids" not in args:
+                if isinstance(filter_ids, list) and filter_ids:
+                    args["ids"] = filter_ids
+
+            # If sender provided in objective filter and not in args, pass it through
+            if "sender" not in args and filter_.get("sender"):
+                args["sender"] = filter_["sender"]
+
+            # If we still have no ids or sender, fall back to a limit (handled by tool)
+            # Remove any unknown keys that the tool does not accept (defensive).
+            try:
+                tool = self.tools.get("mark_all_read")
+                allowed = set(tool.args_schema.keys())
+                # keep only allowed args
+                args = {k: v for k, v in args.items() if k in allowed}
+            except Exception:
+                # if tool not registered or schema missing, leave args as-is
+                pass
+
+        if tool_name in {"delete_email", "mark_email", "get_email_content"}:
+            if "id" not in args:
+                msg_id = filter_.get("id") or resolved_id
+                if msg_id:
+                    args["id"] = msg_id
+
+        return args
+
+    # --------------------------------------------------
+    # Utilities
+    # --------------------------------------------------
+    def _extract_concrete_id(self, objective, state):
+        if state.get("resolved_id"):
+            return state["resolved_id"]
+
+        target = objective.get("target") or {}
+        filter_ = target.get("filter") or {}
+
+        return (
+            filter_.get("id")
+            or filter_.get("draft_id")
+            or filter_.get("thread_id")
+        )
+
+    def _reset_run_state(self):
+        self.observations: List[Dict[str, Any]] = []
+        self.called_tools: set[str] = set()
+
+    def _decide_next_step(self, objective):
+        prompt = self._build_prompt(objective)
+        response = self.llm.invoke(prompt)
+        return self._parse_llm_step(response.content)
+
+    def _build_prompt(self, objective):
         return f"""
 You are NEMESIS, an execution-only agent.
 
@@ -293,36 +378,115 @@ Rules:
 - Choose exactly ONE action
 - Either call ONE tool or return DONE
 - Never repeat a tool
-- Never ask questions
 - Never invent IDs
 - Output JSON only
 """
 
     # --------------------------------------------------
-    # Parsing
+    # Parsing (LLM-HARDENED)
     # --------------------------------------------------
     def _parse_llm_step(self, content: str) -> Dict[str, Any]:
-        raw = json.loads(content)
+        if not content or not content.strip():
+            raise ValueError("LLM returned empty response")
+
+        text = content.strip()
+        first_open = text.find("{")
+        if first_open == -1:
+            raise ValueError(f"LLM returned no JSON:\n{text}")
+
+        brace_count = 0
+        json_end = None
+        for i in range(first_open, len(text)):
+            if text[i] == "{":
+                brace_count += 1
+            elif text[i] == "}":
+                brace_count -= 1
+                if brace_count == 0:
+                    json_end = i
+                    break
+
+        if json_end is None:
+            raise ValueError(f"Unclosed JSON object:\n{text}")
+
+        raw = json.loads(text[first_open:json_end + 1])
 
         if raw.get("type") == "done":
-            return {"type": "done", "summary": raw.get("summary")}
+            return {"type": "done"}
 
-        tool = raw.get("tool") or raw.get("action")
-        if tool:
-            return {"type": "tool", "tool": tool, "args": raw.get("args", {})}
+        if "name" in raw or "tool" in raw:
+            return {
+                "type": "tool",
+                "tool": raw.get("name") or raw.get("tool"),
+                "arguments": raw.get("args", {}),
+            }
 
-        raise ValueError(f"Invalid step: {raw}")
+        # HF fallback: echoed objective
+        if (
+            "domain" in raw
+            and "intent" in raw
+            and "target" in raw
+            and "operation" in raw
+        ):
+            return {
+                "type": "tool",
+                "tool": self._tool_from_objective(raw),
+                "arguments": {},
+            }
 
-    # --------------------------------------------------
-    # Validation & result
-    # --------------------------------------------------
-    def _validate_state(self, state: Dict[str, Any]) -> None:
+        raise ValueError(f"Invalid LLM step JSON:\n{raw}")
+
+    def _tool_from_objective(self, objective: Dict[str, Any]) -> str:
+        domain = objective.get("domain")
+        intent = objective.get("intent")
+
+        if (domain, intent) == ("email", "delete_messages_bulk"):
+            return "delete_emails_bulk"
+        if (domain, intent) == ("email", "delete_message"):
+            return "delete_email"
+        if (domain, intent) == ("email", "update_read_state"):
+            # Prefer bulk mark tool if multiple ids or sender filter provided.
+            filter_ = objective.get("target", {}).get("filter", {}) or {}
+            if isinstance(filter_.get("ids"), list) and filter_["ids"]:
+                return "mark_all_read"
+            if filter_.get("sender") or filter_.get("from"):
+                return "mark_all_read"
+            return "mark_email"
+
+        raise ValueError(f"No tool mapping for {domain}::{intent}")
+
+    def _normalize_tool_choice(self, step: Dict[str, Any], objective: Dict[str, Any]) -> Dict[str, Any]:
+        """If the LLM selected a single-item tool but the objective clearly
+        targets multiple messages (ids list or sender), prefer the bulk tool.
+        This enforces the contract that bulk operations are performed
+        deterministically when concrete ids are already available.
+        """
+        tool = step.get("tool")
+        if not tool:
+            return step
+
+        filter_ = objective.get("target", {}).get("filter", {}) or {}
+
+        if tool == "mark_email":
+            if isinstance(filter_.get("ids"), list) and filter_["ids"]:
+                step["tool"] = "mark_all_read"
+            elif filter_.get("sender") or filter_.get("from"):
+                step["tool"] = "mark_all_read"
+
+            # If the LLM provided a single 'id' argument, migrate it to 'ids'
+            # so the bulk tool receives the correct param name and passes schema validation.
+            args = step.get("arguments") or step.get("args") or {}
+            if step.get("tool") == "mark_all_read" and "id" in args:
+                args.setdefault("ids", [args.pop("id")])
+                # normalize to 'arguments' key
+                step["arguments"] = args
+
+        return step
+
+    def _retrieve_candidates(self, objective):
+        tool = self.tools.get("check_unread")
+        raw = tool.run({"limit": 10})
+        return [email_to_candidate(m) for m in raw]
+
+    def _validate_state(self, state):
         if not state.get("objective"):
             raise ValueError("NEMESIS requires an objective")
-
-    def _success(self, summary: str, raw: Any = None) -> Dict[str, Any]:
-        return {
-            "status": "success",
-            "summary": summary,
-            "artifacts": {"raw_data": raw} if raw is not None else {},
-        }

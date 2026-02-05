@@ -1,5 +1,9 @@
 from .spec import ObjectiveSpec
 
+# =================================================
+# EMAIL DOMAIN
+# =================================================
+
 # -------------------------------------------------
 # UPDATE READ STATE
 # -------------------------------------------------
@@ -64,7 +68,6 @@ RETRIEVE_CANDIDATES = ObjectiveSpec(
     requires_concrete_identity=False,
 )
 
-
 # -------------------------------------------------
 # SUMMARIZE MESSAGE (READ-ONLY)
 # -------------------------------------------------
@@ -74,11 +77,7 @@ SUMMARIZE_MESSAGE = ObjectiveSpec(
     intent="summarize",
     description="Summarize the content of an email message",
 
-    # Summarization always targets ONE resolved message
     allowed_selectors=["single"],
-
-    # ❗ DO NOT require "id" here
-    # ID is resolved later by IRIS
     required_filter_fields={
         "single": [],
     },
@@ -86,10 +85,8 @@ SUMMARIZE_MESSAGE = ObjectiveSpec(
     operation_type="read",
     allowed_operation_values=["content"],
 
-    # IRIS MUST resolve the message before execution
     requires_concrete_identity=True,
 )
-
 
 # -------------------------------------------------
 # COMPOSE MESSAGE (CREATE DRAFT)
@@ -100,7 +97,6 @@ COMPOSE_MESSAGE = ObjectiveSpec(
     intent="compose_message",
     description="Compose a new email draft",
 
-    # Creation → no existing entity
     allowed_selectors=["new"],
     required_filter_fields={
         "new": [],
@@ -109,7 +105,6 @@ COMPOSE_MESSAGE = ObjectiveSpec(
     operation_type="create",
     allowed_operation_values=["email_draft"],
 
-    # 🔒 MUST NOT require identity
     requires_concrete_identity=False,
 )
 
@@ -130,7 +125,6 @@ SEND_MESSAGE = ObjectiveSpec(
     operation_type="send",
     allowed_operation_values=["email"],
 
-    # 🔒 draft_id is mandatory
     requires_concrete_identity=True,
 )
 
@@ -151,15 +145,70 @@ SEND_DRAFT = ObjectiveSpec(
 )
 
 # -------------------------------------------------
-# OBJECTIVE REGISTRY
+# DELETE BULK MESSAGES
 # -------------------------------------------------
 
+DELETE_BULK_MESSAGES = ObjectiveSpec(
+    domain="email",
+    intent="delete_messages_bulk",
+    description="Delete multiple email messages by their IDs",
+
+    allowed_selectors=["subset"],
+    required_filter_fields={
+        "subset": ["ids"],
+    },
+
+    operation_type="delete",
+    allowed_operation_values=["bulk_messages"],
+
+    requires_concrete_identity=False,
+)
+
+# =================================================
+# SMART HOME DOMAIN (NEW — HARD-LOCKED)
+# =================================================
+
+# -------------------------------------------------
+# SWITCH POWER (ON / OFF / TOGGLE)
+# -------------------------------------------------
+
+SWITCH_POWER = ObjectiveSpec(
+    domain="smart_home",
+    intent="switch_power",
+    description="Explicitly switch power state of a smart device or device group",
+
+    # 🔒 ONLY explicit selector allowed
+    allowed_selectors=["explicit"],
+
+    # 🔒 NO filters allowed (no discovery, no inference)
+    required_filter_fields={
+        "explicit": [],
+    },
+
+    operation_type="power",
+    allowed_operation_values=["on", "off", "toggle"],
+
+    # 🔒 Explicit device binding is enforced in NEMESIS
+    requires_concrete_identity=False,
+)
+
+# =================================================
+# OBJECTIVE REGISTRY
+# =================================================
+
 OBJECTIVE_REGISTRY = {
+    # EMAIL
     ("email", "update_read_state"): UPDATE_READ_STATE,
     ("email", "delete_message"): DELETE_MESSAGE,
     ("email", "summarize"): SUMMARIZE_MESSAGE,
-    ("entity", "retrieve_candidates"): RETRIEVE_CANDIDATES,
     ("email", "compose_message"): COMPOSE_MESSAGE,
     ("email", "send_message"): SEND_MESSAGE,
     ("email", "send_draft"): SEND_DRAFT,
+    ("email", "delete_messages_bulk"): DELETE_BULK_MESSAGES,
+
+    # DISCOVERY
+    ("entity", "retrieve_candidates"): RETRIEVE_CANDIDATES,
+
+    # SMART HOME
+    ("smart_home", "switch_power"): SWITCH_POWER,
 }

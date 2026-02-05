@@ -1,22 +1,68 @@
-from typing import Dict, Any
+from typing import Dict, Any, Optional
+
 
 class SendDraftTool:
     name = "send_draft"
-    description = "Send an existing Gmail draft by draft ID."
+    description = (
+        "Send an existing Gmail draft. "
+        "If draft ID is not provided, sends the latest draft."
+    )
 
     args_schema = {
         "id": {
             "type": "string",
-            "required": True,
-            "description": "Gmail draft ID",
+            "required": False,
+            "description": "Gmail draft ID (optional). If omitted, latest draft is used.",
         }
     }
 
     def __init__(self, service):
         self.service = service
 
+    def _get_latest_draft_id(self) -> str:
+        """
+        Retrieve all drafts and return the draft ID
+        with the most recent internalDate.
+        """
+        drafts_response = (
+            self.service.users()
+            .drafts()
+            .list(userId="me")
+            .execute()
+        )
+
+        drafts = drafts_response.get("drafts", [])
+        if not drafts:
+            raise RuntimeError("No drafts found in Gmail.")
+
+        latest_draft_id: Optional[str] = None
+        latest_ts: int = -1
+
+        for d in drafts:
+            draft = (
+                self.service.users()
+                .drafts()
+                .get(userId="me", id=d["id"])
+                .execute()
+            )
+
+            msg = draft.get("message", {})
+            ts = int(msg.get("internalDate", 0))
+
+            if ts > latest_ts:
+                latest_ts = ts
+                latest_draft_id = d["id"]
+
+        if not latest_draft_id:
+            raise RuntimeError("Unable to determine latest draft.")
+
+        return latest_draft_id
+
     def run(self, args: Dict[str, Any]) -> Dict[str, Any]:
-        draft_id = args["id"]
+        draft_id = args.get("id")
+
+        if not draft_id:
+            draft_id = self._get_latest_draft_id()
 
         result = (
             self.service.users()
@@ -25,4 +71,8 @@ class SendDraftTool:
             .execute()
         )
 
-        return result
+        return {
+            "status": "sent",
+            "draft_id": draft_id,
+            "message_id": result.get("id"),
+        }

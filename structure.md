@@ -21,6 +21,7 @@
 │   │       │   │   ├── __init__.py
 │   │       │   │   ├── check_unread.py
 │   │       │   │   ├── delete_email.py
+│   │       │   │   ├── delete_emails_bulk.py
 │   │       │   │   ├── get_email_content.py
 │   │       │   │   ├── list_recent_emails.py
 │   │       │   │   ├── mark_all_read.py

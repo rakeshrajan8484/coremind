@@ -8,7 +8,7 @@ log = get_logger("NEMESIS.TOOLS.GMAIL.COMPOSE")
 
 
 class ComposeEmailTool:
-    name = "compose_email"
+    name = "compose_message"
     description = "Compose an email draft using Gmail (does not send)"
 
     capabilities = {

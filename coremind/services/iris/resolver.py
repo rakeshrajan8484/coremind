@@ -1,6 +1,6 @@
 import json
 import re
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Union
 from langchain_core.messages import SystemMessage, HumanMessage
 from coremind.llms.factory import LLMFactory
 from coremind.logging import get_logger
@@ -27,7 +27,7 @@ def extract_json_object(text: str) -> dict:
 
 
 # ==================================================
-# 🧠 IRIS RESOLVER (STRICT, CONSERVATIVE)
+# 🧠 IRIS RESOLVER (STRICT, BULK-SAFE)
 # ==================================================
 
 class IrisResolver:
@@ -35,9 +35,9 @@ class IrisResolver:
     IRIS = reference resolution only.
 
     STRICT RULES:
-    - Never invent
-    - Never broaden
-    - Fail fast on ambiguity
+    - Never invent IDs
+    - Never broaden scope
+    - Cardinality driven ONLY by selector
     """
 
     VERBS = {
@@ -77,7 +77,7 @@ class IrisResolver:
 
         constraints["sender_keywords"] = keywords
 
-        # Date extraction (Dec 23)
+        # Date extraction (e.g. Dec 23)
         m = re.search(
             r"(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\s+(\d{1,2})",
             ref,
@@ -105,7 +105,7 @@ class IrisResolver:
     ) -> Optional[Dict[str, Any]]:
 
         constraints = self._extract_constraints(reference)
-        scored = []
+        scored: List[tuple[int, Dict[str, Any]]] = []
 
         for c in candidates:
             score = 0
@@ -136,7 +136,9 @@ class IrisResolver:
         top_score = scored[0][0]
         top = [c for s, c in scored if s == top_score]
 
-        # 🔒 selector=single MUST be exact
+        # --------------------------------------------------
+        # 🔒 selector = single
+        # --------------------------------------------------
         if selector == "single":
             if len(top) == 1:
                 return {
@@ -146,22 +148,26 @@ class IrisResolver:
                 }
             return None
 
-        # subset / all may allow ambiguity
-        if len(top) == 1:
+        # --------------------------------------------------
+        # 🔒 selector = subset | all → BULK ALLOWED
+        # --------------------------------------------------
+        if selector in {"subset", "all"}:
+            ids = [c["id"] for c in top]
+
+            if len(ids) == 1:
+                return {
+                    "resolved_to": ids,
+                    "confidence": min(1.0, top_score / 6),
+                    "alternatives": [],
+                }
+
             return {
-                "resolved_to": top[0]["id"],
+                "resolved_to": ids,
                 "confidence": min(1.0, top_score / 6),
                 "alternatives": [],
             }
 
-        return {
-            "resolved_to": None,
-            "confidence": 0.5,
-            "alternatives": [
-                {"entity_id": c["id"], "confidence": 0.5}
-                for c in top
-            ],
-        }
+        return None
 
     # --------------------------------------------------
     # 🔒 Main entry point
@@ -191,7 +197,6 @@ class IrisResolver:
             log.warning("IRIS STRUCTURED RESOLUTION: %s", structured)
             return structured
 
-        # 🔒 NO LLM FALLBACK if structured score == 0
         return {
             "resolved_to": None,
             "confidence": 0.0,
@@ -200,7 +205,7 @@ class IrisResolver:
 
 
 # ==================================================
-# 🔁 LANGGRAPH NODE
+# 🔁 LANGGRAPH NODE (BULK-SAFE)
 # ==================================================
 
 def iris_node(state: Dict[str, Any]) -> Dict[str, Any]:
@@ -209,7 +214,6 @@ def iris_node(state: Dict[str, Any]) -> Dict[str, Any]:
         state.get("objective", {}).get("_intent"),
         state.get("reference"),
     )
-
 
     objective = state.get("objective")
     if not objective:
@@ -230,7 +234,7 @@ def iris_node(state: Dict[str, Any]) -> Dict[str, Any]:
     # NEVER leak resolution globally
     state.pop("resolved_id", None)
 
-    if result["resolved_to"]:
+    if result["resolved_to"] is not None:
         return {
             **state,
             "objective": {

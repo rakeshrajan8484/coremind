@@ -1,0 +1,17 @@
+living_room:
+  light:
+    device_id: relay_01
+    channel: 1
+    capabilities: [switch]
+
+bedroom:
+  fan:
+    device_id: relay_02
+    channel: 2
+    capabilities: [switch]
+
+kitchen:
+  light:
+    device_id: relay_03
+    channel: 1
+    capabilities: [switch]

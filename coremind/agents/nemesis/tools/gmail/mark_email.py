@@ -47,8 +47,8 @@ class MarkEmailTool:
         else:
             labels_to_add = ["UNREAD"]
 
-        # Gmail MODIFY is a mutation — no candidates involved
-        self.service.users().threads().modify(
+        # Gmail MODIFY is a mutation — operate on messages when a message id is provided
+        self.service.users().messages().modify(
             userId="me",
             id=msg_id,
             body={

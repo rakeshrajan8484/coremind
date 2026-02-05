@@ -6,4 +6,5 @@ from .delete_email import DeleteEmailTool
 from .list_recent_emails import ListRecentEmailsTool
 from .compose_email import ComposeEmailTool
 from .send_draft import SendDraftTool
-__all__ = ["CheckUnreadTool", "GetEmailContentTool", "MarkAllReadTool", "MarkEmailTool", "DeleteEmailTool", "ListRecentEmailsTool", "ComposeEmailTool",  "SendDraftTool"]
+from .delete_emails_bulk import DeleteEmailsBulkTool
+__all__ = ["CheckUnreadTool", "GetEmailContentTool", "MarkAllReadTool", "MarkEmailTool", "DeleteEmailTool", "ListRecentEmailsTool", "ComposeEmailTool",  "SendDraftTool", "DeleteEmailsBulkTool"]

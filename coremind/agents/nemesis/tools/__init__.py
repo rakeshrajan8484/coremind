@@ -7,6 +7,8 @@ from coremind.agents.nemesis.tools.gmail.mark_email import MarkEmailTool
 from coremind.agents.nemesis.tools.gmail.mark_all_read import MarkAllReadTool
 from coremind.agents.nemesis.tools.gmail.compose_email import ComposeEmailTool
 from coremind.agents.nemesis.tools.gmail.send_draft import SendDraftTool
+from coremind.agents.nemesis.tools.gmail.delete_emails_bulk import DeleteEmailsBulkTool
+from coremind.agents.nemesis.tools.smart_home_control import SmartHomeControlTool
 
 import coremind.agents.nemesis.tools 
 from coremind.agents.nemesis.tools.registry import TOOL_REGISTRY
@@ -21,6 +23,8 @@ TOOL_REGISTRY.register(MarkAllReadTool(gmail_service))
 TOOL_REGISTRY.register(ListRecentEmailsTool(gmail_service))
 TOOL_REGISTRY.register(ComposeEmailTool(gmail_service))
 TOOL_REGISTRY.register(SendDraftTool(gmail_service))
+TOOL_REGISTRY.register(DeleteEmailsBulkTool(gmail_service))
+TOOL_REGISTRY.register(SmartHomeControlTool())
 __all__ = [
     "CheckUnreadTool",
     "GetEmailContentTool",
@@ -30,4 +34,5 @@ __all__ = [
     "ListRecentEmailsTool",
     "ComposeEmailTool",
     "SendDraftTool",
+    "DeleteEmailsBulkTool",
 ]

@@ -160,6 +160,40 @@ IRIS is invoked by ATLAS only at reference-resolution boundaries.
 
 ---
 
+## 3.5 Observation Domains (Non-Terminal Objectives)
+
+Some objectives represent **continuous observation**, not discrete execution.
+
+Examples:
+- Live camera monitoring
+- Audio listening
+- Sensor streams
+- Event detection over time
+
+These objectives differ fundamentally from action-based tools.
+
+### Characteristics
+
+* They do NOT terminate automatically
+* They do NOT return a final answer
+* They emit events and artifacts incrementally
+* They must be explicitly stopped
+
+### Example Objective
+
+```json
+{
+  "domain": "observation",
+  "intent": "monitor_video_stream",
+  "target": {
+    "entity": "video_stream",
+    "id": "cam_live_42"
+  }
+}
+```
+---
+
+
 ## 4. LLM Usage Rules
 
 | Component | Purpose | Agentic |
