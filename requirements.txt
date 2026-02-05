@@ -11,6 +11,7 @@ langchain-community>=0.2.0
 # =========================
 langchain-groq>=0.1.0        # Groq (Llama 3.1, fast & free tier)
 langchain-ollama>=0.1.0      # Local models via Ollama
+langchain-huggingface>=0.0.1   # HuggingFace models
 
 # =========================
 # Configuration & typing
@@ -42,3 +43,10 @@ uvicorn
 # Observability
 langsmith
 opentelemetry-sdk
+
+# =========================
+# Integrations
+# =========================
+google-auth>=2.29.0
+google-auth-oauthlib>=1.2.0
+google-api-python-client>=2.120.0
