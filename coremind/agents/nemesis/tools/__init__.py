@@ -13,7 +13,13 @@ from coremind.agents.nemesis.tools.smart_home_control import SmartHomeControlToo
 import coremind.agents.nemesis.tools 
 from coremind.agents.nemesis.tools.registry import TOOL_REGISTRY
  
-gmail_service = get_gmail_service()
+gmail_service = None
+
+def get_gmail():
+    global gmail_service
+    if gmail_service is None:
+        gmail_service = get_gmail_service()
+    return gmail_service
 
 tool = CheckUnreadTool(gmail_service)
 TOOL_REGISTRY.register(tool, tool.run)

@@ -23,6 +23,14 @@ SESSION_STORE = SessionStore()
 logger = logging.getLogger(__name__)
 
 # -------------------------------------------------
+# Health Check
+# -------------------------------------------------
+
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
+# -------------------------------------------------
 # Telegram Config
 # -------------------------------------------------
 
