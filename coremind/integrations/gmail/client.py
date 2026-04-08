@@ -1,5 +1,8 @@
 from pathlib import Path
 import pickle
+import json
+import os
+import tempfile
 
 from googleapiclient.discovery import build
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -10,7 +13,25 @@ SCOPES = ["https://www.googleapis.com/auth/gmail.modify"]
 
 COREMIND_DIR = Path.home() / ".coremind"
 TOKEN_PATH = COREMIND_DIR / "gmail_token.pkl"
-CREDS_PATH = COREMIND_DIR / "gmail_credentials.json"
+
+
+def _get_creds_file_from_env():
+    """
+    Reads Gmail credentials JSON from environment variable
+    and writes it to a temporary file (required by Google lib).
+    """
+    creds_json = os.environ.get("GMAIL_CREDENTIALS_JSON")
+
+    if not creds_json:
+        return None
+
+    data = json.loads(creds_json)
+
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".json")
+    with open(tmp.name, "w") as f:
+        json.dump(data, f)
+
+    return tmp.name
 
 
 def get_gmail_service():
@@ -21,11 +42,13 @@ def get_gmail_service():
 
     creds = None
 
+    # --------------------------------------------------
+    # 🔒 Load existing token
+    # --------------------------------------------------
     if TOKEN_PATH.exists():
         with open(TOKEN_PATH, "rb") as token:
             creds = pickle.load(token)
 
-        # 🔒 Invalidate token if required scopes are missing
         if not creds.scopes or not set(SCOPES).issubset(set(creds.scopes)):
             creds = None
 
@@ -35,23 +58,30 @@ def get_gmail_service():
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             try:
-                # ⚠️ Refresh will NOT upgrade scopes
                 creds.refresh(Request())
             except RefreshError:
-                # 🔥 Token is dead → force full re-auth
                 creds = None
 
         if not creds:
+            creds_file = _get_creds_file_from_env()
+
+            if not creds_file:
+                raise RuntimeError(
+                    "GMAIL_CREDENTIALS_JSON not set in environment"
+                )
+
             flow = InstalledAppFlow.from_client_secrets_file(
-                CREDS_PATH,
+                creds_file,
                 SCOPES,
             )
-            print("[GMAIL] Waiting for OAuth consent in browser...")
+
+            print("[GMAIL] Waiting for OAuth consent...")
+
             creds = flow.run_local_server(
                 port=0,
-                open_browser=True,
+                open_browser=False,  # 🔥 IMPORTANT for serverless
                 prompt="consent",
-                include_granted_scopes=False,  # 🔒 CRITICAL
+                include_granted_scopes=False,
             )
 
         COREMIND_DIR.mkdir(exist_ok=True)
