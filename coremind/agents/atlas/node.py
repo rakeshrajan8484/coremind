@@ -78,6 +78,8 @@ def _finalize_compose_constraints(obj: Dict[str, Any], state: Dict[str, Any]) ->
     # Resolve body
     # ----------------------------
     constraints = obj.get("constraints")
+    if not constraints.get("path"):
+        constraints["path"] = "index.html"
     if isinstance(constraints, dict) and isinstance(constraints.get("body"), str):
         body = constraints["body"]
     else:
@@ -99,7 +101,7 @@ Topic:
 {intent_text}
 """
         body = planner_llm.invoke(prompt).content.strip()
-
+        log.info("Generated body: %s", body)
         # defensive cleanup
         body = re.sub(r"(?i)^subject:.*?\n+", "", body).strip()
 
@@ -345,6 +347,7 @@ def atlas_node(state: Dict[str, Any]) -> Dict[str, Any]:
 
     current_obj = state.get("objective")
     result = state.get("result")
+    
 
     # ==================================================
     # 1️⃣ CONSUME RESULT
@@ -375,7 +378,7 @@ def atlas_node(state: Dict[str, Any]) -> Dict[str, Any]:
             return {
                 **state,
                 "objective": discovery_obj,
-                "current_agent": "nemesis",
+                
                 "result": None,
             }
 
@@ -426,7 +429,7 @@ def atlas_node(state: Dict[str, Any]) -> Dict[str, Any]:
             return {
                 **state,
                 "objective": original,
-                "current_agent": "nemesis",
+                
                 "result": None,
             }
 
@@ -450,7 +453,7 @@ def atlas_node(state: Dict[str, Any]) -> Dict[str, Any]:
         return {
             **state,
             "objective": current_obj,
-            "current_agent": "nemesis",
+            
             "result": None,
         }
 
@@ -459,29 +462,73 @@ def atlas_node(state: Dict[str, Any]) -> Dict[str, Any]:
     # ==================================================
     if not current_obj and not state["objective_queue"]:
         log.info("Planning new objectives for utterance: %s", state["utterance"])
+        print("LLM TYPE:", type(planner_llm))
 
         planner_response = planner_llm.invoke(
             [SystemMessage(ATLAS_PLANNER_PROMPT), HumanMessage(state["utterance"])]
         )
 
         log.debug("Planner raw response: %s", planner_response.content)
-        raw = _parse_json(planner_response.content)
 
-        for o in raw.get("objectives", []):
+        try:
+            raw = _parse_json(planner_response.content)
+        except Exception as e:
+            log.error("❌ Failed to parse planner response: %s", e)
+            return {
+                **state,
+                "messages": messages + [AIMessage("I couldn’t understand that request.")],
+                "terminated": True,
+            }
+
+        objectives = raw.get("objectives", [])
+
+        # 🔥 FIX: handle empty objectives
+        if not objectives:
+            log.warning("⚠️ Planner returned no objectives")
+
+            return {
+                **state,
+                "messages": messages + [
+                    AIMessage("I couldn’t find an action to perform. Can you rephrase?")
+                ],
+                "objective": None,
+                "objective_queue": [],
+                "terminated": True,
+            }
+
+        # ✅ Normal flow
+        for o in objectives:
             o["_objective_id"] = str(uuid.uuid4())
-            o["_intent"] = o["intent_text"]
+            o["_intent"] = o.get("intent_text", "")
             o["_discovery_planned"] = False
-            _finalize_compose_constraints(o, state["utterance"])
+
+            try:
+                _finalize_compose_constraints(o, state["utterance"])
+            except Exception as e:
+                log.warning("Constraint finalize failed: %s", e)
+
             target = o.get("target", {})
             entity = target.get("entity")
 
-            if entity and entity not in KNOWN_ENTITIES:
-                log.debug("Unknown entity '%s' → coercing to message sender", entity)
-                target["entity"] = "message"
-                target.setdefault("filter", {})["sender"] = entity
+            # 🔥 FIX: Only apply for EMAIL domain
+            if o.get("domain") == "email":
+                if entity and entity not in KNOWN_ENTITIES:
+                    log.debug("Unknown entity '%s' → coercing to message sender", entity)
+                    target["entity"] = "message"
+                    target.setdefault("filter", {})["sender"] = entity
 
             log.info("Queued objective: %s", o)
             state["objective_queue"].append(o)
+
+        # 🔥 SAFE POP
+        if not state["objective_queue"]:
+            log.error("❌ Objective queue still empty after processing")
+
+            return {
+                **state,
+                "messages": messages + [AIMessage("Something went wrong while planning.")],
+                "terminated": True,
+            }
 
         next_obj = state["objective_queue"].pop(0)
         log.info("Dispatching objective: %s", next_obj)
@@ -490,7 +537,6 @@ def atlas_node(state: Dict[str, Any]) -> Dict[str, Any]:
             **state,
             "objective": next_obj,
         }
-
     # ==================================================
     # 4️⃣ DEFERRAL → DISCOVERY (ONCE)
     # ==================================================
@@ -517,7 +563,7 @@ def atlas_node(state: Dict[str, Any]) -> Dict[str, Any]:
         return {
             **state,
             "objective": discovery_obj,
-            "current_agent": "nemesis",
+            
             "result": None,
         }
 

@@ -21,7 +21,7 @@ class ToolRegistry:
     # Registration
     # --------------------------------------------------
 
-    def register(self, tool) -> None:
+    def register(self, tool, func) -> None:
         if self._locked:
             raise RuntimeError("ToolRegistry is locked; registration forbidden")
 

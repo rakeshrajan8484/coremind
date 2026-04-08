@@ -40,6 +40,12 @@ DOMAIN: smart_home
 ------------------
 - "switch_power"
 
+DOMAIN: code
+------------------
+- "generate_code"
+- "modify_code"
+- "read_code"
+
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 OUTPUT SCHEMA (STRICT)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -78,6 +84,7 @@ GLOBAL CRITICAL RULES (MANDATORY)
 - NEVER invent identifiers, devices, or message IDs
 - NEVER infer missing physical-world details
 - If an action requires guessing → OMIT it
+- For coding requests, ALWAYS produce a code objective
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 EMAIL INTENT → OPERATION MAPPING (MANDATORY)
@@ -144,6 +151,34 @@ SMART HOME HARD SAFETY RULES (NON-NEGOTIABLE)
 
 If the user request does not name a resolvable device
 or device_group explicitly → OMIT the objective.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CODE INTENT → OPERATION MAPPING (MANDATORY)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+generate_code:
+- domain          = "code"
+- target.entity   = "file"
+- target.selector = "new"
+- operation.type  = "create"
+- operation.value = "file"
+- constraints MUST include:
+  - "path"
+  - "description"
+
+modify_code:
+- domain          = "code"
+- target.entity   = "file"
+- target.selector = "explicit"
+- operation.type  = "update"
+- operation.value = "file"
+
+read_code:
+- domain          = "code"
+- target.entity   = "file"
+- target.selector = "explicit"
+- operation.type  = "read"
+- operation.value = "file"
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 REFERENCE RULES

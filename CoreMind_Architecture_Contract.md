@@ -1,269 +1,250 @@
-# CoreMind Architecture Contract (v1.0)
-
-## Purpose
-CoreMind is a multi-agent system designed to strictly separate:
-- conversation
-- planning
-- execution
-- reference resolution
-- infrastructure
-
-This document is **authoritative**. Any deviation is a bug.
+# CoreMind Architecture Contract (v1.1)
+## With ARGUS Observer Agent
 
 ---
 
-## 1. Core Components
+## CoreMind
 
-### 1.1 ATLAS — Conversational Planner Agent
-**Role:** Primary interface to the user.
+A **contract-driven, multi-agent execution system** designed to safely translate natural language into real-world side effects (email actions today, extensible to other domains tomorrow).
 
-**Responsibilities**
-- Talk to the user
-- Ask clarifying questions
-- Interpret intent, constraints, and context
-- Decide *what objective should be attempted next*
-- Own the objective lifecycle
-- Decide when the system terminates
-- Invoke IRIS when human references must be resolved
-
-**Must NOT**
-- Call tools
-- Execute side effects
-- Choose API-level parameters
-- Loop over execution steps
-
-**LLM**
-- `LLMFactory.atlas()`
+This document is the **normative architectural contract** of CoreMind.  
+Any behavior not described here is considered undefined.
 
 ---
 
-### 1.2 NEMESIS — Execution Agent
-**Role:** Autonomous execution agent.
+## 1. Core Design Principles
 
-**Responsibilities**
-- Receive an objective from ATLAS
-- Use its own LLM to:
-  - choose the correct tool
-  - choose tool arguments
-  - reason over past observations
-  - avoid repeated tool calls
-- Execute tools
-- Decide whether the objective is complete
-- Return structured results to ATLAS
+### 1.1 Determinism over eloquence
 
-**Must NOT**
-- Talk to the user
-- Ask clarifying questions
-- Resolve ambiguous references
-- Own objective lifecycle beyond execution
+LLMs are used **only where ambiguity exists** (intent understanding, planning, diagnosis).
+All irreversible actions and confirmations are rendered **deterministically in code**.
 
-**LLM**
-- `LLMFactory.nemesis()`
+### 1.2 Contract-first architecture
+
+Every agent has a strict, enforceable contract.
+Violations are treated as **bugs**, not prompt-tuning issues.
+
+### 1.3 Separation of concerns
+
+Language understanding, execution, validation, and observation are **intentionally split**.
 
 ---
 
-### 1.3 TOOLS — Execution Primitives
-**Role:** Perform real-world side effects.
+## 2. High-Level Architecture
 
-**Responsibilities**
-- Execute APIs (Gmail, etc.)
-- Validate inputs via schemas
-- Return structured outputs
+### Execution Plane
 
-**Must NOT**
-- Reason
-- Choose when to run
-- Maintain state
-- Call other tools
-
----
-
-### 1.4 IRIS — Reference Resolution Service
-**Role:** Resolve human references into concrete entities.
-
-**Responsibilities**
-- Resolve phrases like:
-  - “the LinkedIn email”
-  - “the second one”
-  - “that message”
-- Return:
-  - single resolution
-  - ambiguous
-  - none
-
-**Must NOT**
-- Call tools
-- Loop
-- Decide objectives
-- Execute side effects
-- Talk to the user
-
-**LLM**
-- `LLMFactory.iris()`
-
-> IRIS has an LLM but is **not an agent**.
-> It is a stateless cognitive service.
-
----
-
-### 1.5 LangGraph — Control Flow Infrastructure
-**Role:** Deterministic orchestration.
-
-**Responsibilities**
-- Route execution between ATLAS and NEMESIS
-- Maintain state as a dict
-- Enforce termination
-
-**Must NOT**
-- Contain intelligence
-- Make decisions
-
----
-
-## 2. State Contract
-
-State is always a dict:
-
-```python
-state = {
-  "messages": list,
-  "current_agent": "atlas" | "nemesis",
-  "objective": dict | None,
-  "result": dict | None,
-  "terminated": bool,
-}
+```
+User
+  │
+  ▼
+ATLAS (Planner & UX)
+  │
+  ▼
+NEMESIS (Executor)
+  │
+  ▼
+TOOLS (Side effects)
 ```
 
-Rules:
-- No attribute access (`state.foo` forbidden)
-- ATLAS creates and clears objectives
-- NEMESIS writes results
-- ATLAS consumes results
+### Observability Plane (Non-blocking)
+
+```
+Execution Graph
+   │
+   ▼
+ARGUS (Observer & Forensics)
+```
+
+ARGUS operates **out-of-band** and has no authority over execution.
 
 ---
 
-## 3. Canonical Execution Flow
+## 3. Agent Responsibilities (Hard Contract)
 
-User  
-↓  
-ATLAS (conversation & planning)  
-↓ objective  
-NEMESIS (LLM-driven execution)  
-↓ tool calls  
-TOOLS  
-↓ observations  
-NEMESIS (decide next tool or done)  
-↓ result  
-ATLAS (final response)
+### 3.1 ATLAS — Planner & User Interface
 
-IRIS is invoked by ATLAS only at reference-resolution boundaries.
+**Responsibilities**
+- Interpret user intent using LLMs
+- Compile objectives (single or multi-step)
+- Own *all* user-facing language
+- Decide when execution terminates
+- Render confirmations using deterministic templates
+
+**Prohibitions**
+- Must not execute tools
+- Must not perform side effects
+- Must not infer execution results
 
 ---
 
-## 3.5 Observation Domains (Non-Terminal Objectives)
+### 3.2 NEMESIS — Execution Engine
 
-Some objectives represent **continuous observation**, not discrete execution.
+**Responsibilities**
+- Execute exactly one objective
+- Call tools deterministically
+- Enforce execution invariants
+- Honor `force_done` termination
 
-Examples:
-- Live camera monitoring
-- Audio listening
-- Sensor streams
-- Event detection over time
-
-These objectives differ fundamentally from action-based tools.
-
-### Characteristics
-
-* They do NOT terminate automatically
-* They do NOT return a final answer
-* They emit events and artifacts incrementally
-* They must be explicitly stopped
-
-### Example Objective
-
+**Output Schema**
 ```json
 {
-  "domain": "observation",
-  "intent": "monitor_video_stream",
-  "target": {
-    "entity": "video_stream",
-    "id": "cam_live_42"
+  "status": "success" | "error",
+  "artifacts": {
+    "raw_data": {}
   }
 }
 ```
----
 
-
-## 4. LLM Usage Rules
-
-| Component | Purpose | Agentic |
-|---------|--------|--------|
-| ATLAS | Planning & conversation | Yes |
-| NEMESIS | Tool selection & execution reasoning | Yes |
-| IRIS | Reference resolution | No |
+**Prohibitions**
+- Must not speak to the user
+- Must not plan objectives
+- Must not resolve ambiguity
+- Must not retry implicitly
 
 ---
 
-## 5. Valid Folder Structure
+### 3.3 TOOLS — Side Effects Only
 
-```text
-coremind/
-├── main.py
-├── graph.py
-├── state.py
-│
-├── llms/
-│   └── factory.py
-│
-├── agents/
-│   ├── atlas/
-│   │   ├── node.py
-│   │   ├── parser.py
-│   │   └── prompt.py
-│   │
-│   └── nemesis/
-│       ├── node.py
-│       ├── agent.py          # execution loop (LLM-driven)
-│       ├── prompt.py
-│       └── tools/
-│           ├── gmail/
-│           │   ├── check_unread.py
-│           │   ├── get_email_content.py
-│           │   ├── delete_email.py
-│           │   └── mark_email.py
-│           ├── registry.py
-│           └── __init__.py
-│
-├── services/
-│   └── iris/
-│       ├── resolver.py
-│       └── prompt.py
-│
-└── pyproject.toml
+**Responsibilities**
+- Perform irreversible actions
+- Return raw execution data
+- Signal completion via `force_done`
+
+**Prohibitions**
+- Must not format user messages
+- Must not control flow
+
+---
+
+### 3.4 IRIS — Reference Resolution (Optional)
+
+**Responsibilities**
+- Resolve ambiguous references deterministically
+- Map natural language to concrete IDs
+
+**Prohibitions**
+- Must not invent IDs
+- Must not execute tools
+- Must not speak to user
+
+---
+
+### 3.5 ARGUS — Observer & Forensics Agent
+
+ARGUS is a **read-only diagnostic agent**.
+
+**Responsibilities**
+- Analyze logs, traces, and failures using an LLM
+- Detect contract violations and anomalies
+- Classify failures
+- Emit structured diagnostic reports
+
+**Prohibitions (Absolute)**
+- Must not execute tools
+- Must not modify objectives
+- Must not rewrite prompts or artifacts
+- Must not communicate with users
+- Must not influence live execution
+- Must not trigger retries or loops
+
+---
+
+### ARGUS Output Contract
+
+```json
+{
+  "status": "ok" | "failure",
+  "failure_class": "schema_violation | contract_violation | tool_error | ambiguity | unknown",
+  "root_cause": "string",
+  "confidence": 0.0,
+  "evidence": ["string"],
+  "recommended_action": {
+    "action_type": "request_input | block_execution | investigate",
+    "reason": "string"
+  },
+  "rewrite_hint": {
+    "artifact": "prompt | schema | validator",
+    "intent": "string",
+    "constraints": ["string"]
+  }
+}
 ```
 
-Folder location defines **ownership**, not intelligence.
+ARGUS outputs are **advisory only**.
 
 ---
 
-## 6. Non-Negotiable Invariants
+## 4. Execution Invariants
 
-- ATLAS never calls tools
-- NEMESIS never talks to the user
-- IRIS never loops or executes
-- Tools never reason
-- Objectives must never contain raw natural language
-- Execution intelligence lives in NEMESIS
-- Conversation intelligence lives in ATLAS
+### 4.1 Single execution per tool
+A tool may be called **at most once per objective**.
+
+### 4.2 Deterministic termination
+If a tool returns:
+```json
+{ "force_done": true }
+```
+NEMESIS must terminate immediately.
+
+### 4.3 No LLM-dependent execution
+Execution correctness must not depend on LLM obedience.
+
+### 4.4 No user-facing language outside ATLAS
+All communication is owned by ATLAS.
+
+### 4.5 Observability must be non-intrusive
+- ARGUS must not block execution
+- ARGUS failure must not cascade
+
+### 4.6 No self-modification at runtime
+- No agent may rewrite prompts or schemas during execution
+- All changes must be explicit and versioned
 
 ---
 
-## 7. Final Principle
+## 5. Deterministic Confirmations
 
-> Conversation plans. Execution reasons. Tools act.  
-> Services resolve. Infrastructure routes.
-
-If this sentence is violated, CoreMind is broken.
+All destructive or irreversible actions use **schema-driven templates**.
+LLM summaries are forbidden.
 
 ---
-End of Contract
+
+## 6. Model Agnosticism
+
+CoreMind is compatible with HuggingFace, Ollama, or hosted models.
+It is hardened against malformed LLM outputs.
+
+---
+
+## 7. Example Flow (Failure Case)
+
+1. User submits intent
+2. ATLAS plans objective
+3. NEMESIS executes tool
+4. Tool fails
+5. ATLAS reports deterministic error
+6. ARGUS analyzes logs post-hoc
+7. System terminates cleanly
+
+---
+
+## 8. Non-Goals
+
+- Implicit retries
+- Self-healing prompts
+- LLM-driven execution
+- Hidden control flow
+- Runtime self-modification
+
+---
+
+## 9. Final Statement
+
+CoreMind is intentionally **boring at execution time**.
+
+> Intelligence proposes.  
+> Governance decides.  
+> Execution obeys.
+
+This document is the architectural contract.

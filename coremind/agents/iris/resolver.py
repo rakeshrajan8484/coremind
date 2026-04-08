@@ -4,9 +4,59 @@ from typing import Dict, Any, List, Optional, Union
 from langchain_core.messages import SystemMessage, HumanMessage
 from coremind.llms.factory import LLMFactory
 from coremind.logging import get_logger
-from coremind.services.iris.prompt import IRIS_PROMPT
+from coremind.agents.iris.prompt import IRIS_PROMPT
+import os
 
 log = get_logger("IRIS")
+
+
+
+def list_all_files(root: str) -> List[str]:
+    files = []
+    for root_dir, _, filenames in os.walk(root):
+        for name in filenames:
+            full = os.path.join(root_dir, name)
+            rel = os.path.relpath(full, root)
+            files.append(rel)
+    return files
+
+
+def resolve_file_path(root: str, query: str) -> Optional[str]:
+    """
+    Resolve semantic file reference → actual path
+    Example: "card component" → "html/layout.html"
+    """
+
+    if not query:
+        return None
+
+    query = query.lower()
+    words = query.split()
+
+    files = list_all_files(root)
+
+    if not files:
+        return None
+
+    scored = []
+
+    for f in files:
+        name = f.lower()
+
+        score = 0
+        for w in words:
+            if w in name:
+                score += 1
+
+        if score > 0:
+            scored.append((score, f))
+
+    if not scored:
+        return None
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+
+    return scored[0][1]
 
 
 # ==================================================
@@ -204,25 +254,61 @@ class IrisResolver:
         }
 
 
+
 # ==================================================
 # 🔁 LANGGRAPH NODE (BULK-SAFE)
 # ==================================================
 
 def iris_node(state: Dict[str, Any]) -> Dict[str, Any]:
     log.warning(
-        "IRIS RESOLVING | objective=%s | reference=%s",
+        "IRIS RESOLVING | objective=%s",
         state.get("objective", {}).get("_intent"),
-        state.get("reference"),
     )
 
     objective = state.get("objective")
-    if not objective:
-        return {
-            **state,
-            "needs_reference_resolution": False,
-            "resolution_error": "IRIS called without objective",
-        }
+    root = state.get("root_path")
 
+    if not objective:
+        return state
+
+    domain = objective.get("domain")
+
+    # ==================================================
+    # 🧠 CODE DOMAIN → FILE PATH RESOLUTION
+    # ==================================================
+    if domain == "code":
+        constraints = objective.get("constraints") or {}
+        path_query = constraints.get("path")
+
+        try:
+            resolved = resolve_file_path(root, path_query)
+
+            if not resolved:
+                raise ValueError(f"No file found for: {path_query}")
+
+            log.info(f"IRIS resolved '{path_query}' → '{resolved}'")
+
+            objective["constraints"]["path"] = resolved
+
+            return {
+                **state,
+                "objective": objective
+            }
+
+        except Exception as e:
+            log.exception("IRIS file resolution failed")
+
+            return {
+                **state,
+                "result": {
+                    "status": "error",
+                    "message": f"Could not resolve file: {path_query}"
+                }
+            }
+
+    # ==================================================
+    # 📧 EXISTING EMAIL RESOLUTION (UNCHANGED)
+    # ==================================================
     resolver = IrisResolver()
 
     result = resolver.resolve(
@@ -231,7 +317,6 @@ def iris_node(state: Dict[str, Any]) -> Dict[str, Any]:
         selector=objective.get("target", {}).get("selector", "single"),
     )
 
-    # NEVER leak resolution globally
     state.pop("resolved_id", None)
 
     if result["resolved_to"] is not None:
@@ -264,3 +349,4 @@ def iris_node(state: Dict[str, Any]) -> Dict[str, Any]:
         },
         "needs_reference_resolution": False,
     }
+

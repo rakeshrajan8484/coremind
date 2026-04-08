@@ -15,16 +15,35 @@ from coremind.agents.nemesis.tools.registry import TOOL_REGISTRY
  
 gmail_service = get_gmail_service()
 
-TOOL_REGISTRY.register(CheckUnreadTool(gmail_service))
-TOOL_REGISTRY.register(GetEmailContentTool(gmail_service))
-TOOL_REGISTRY.register(DeleteEmailTool(gmail_service))
-TOOL_REGISTRY.register(MarkEmailTool(gmail_service))
-TOOL_REGISTRY.register(MarkAllReadTool(gmail_service))
-TOOL_REGISTRY.register(ListRecentEmailsTool(gmail_service))
-TOOL_REGISTRY.register(ComposeEmailTool(gmail_service))
-TOOL_REGISTRY.register(SendDraftTool(gmail_service))
-TOOL_REGISTRY.register(DeleteEmailsBulkTool(gmail_service))
-TOOL_REGISTRY.register(SmartHomeControlTool())
+tool = CheckUnreadTool(gmail_service)
+TOOL_REGISTRY.register(tool, tool.run)
+
+tool = GetEmailContentTool(gmail_service)
+TOOL_REGISTRY.register(tool, tool.run)
+
+tool = DeleteEmailTool(gmail_service)
+TOOL_REGISTRY.register(tool, tool.run)
+
+tool = MarkEmailTool(gmail_service)
+TOOL_REGISTRY.register(tool, tool.run)
+
+tool = MarkAllReadTool(gmail_service)
+TOOL_REGISTRY.register(tool, tool.run)
+
+tool = ListRecentEmailsTool(gmail_service)
+TOOL_REGISTRY.register(tool, tool.run)
+
+tool = ComposeEmailTool(gmail_service)
+TOOL_REGISTRY.register(tool, tool.run)
+
+tool = SendDraftTool(gmail_service)
+TOOL_REGISTRY.register(tool, tool.run)
+
+tool = DeleteEmailsBulkTool(gmail_service)
+TOOL_REGISTRY.register(tool, tool.run)
+
+tool = SmartHomeControlTool()
+TOOL_REGISTRY.register(tool, tool.run)
 __all__ = [
     "CheckUnreadTool",
     "GetEmailContentTool",

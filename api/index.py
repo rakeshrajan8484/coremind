@@ -1,0 +1,1 @@
+from coremind.server.api import app

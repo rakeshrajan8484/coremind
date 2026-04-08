@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Html Layout with 3 Cards</title>
+    <style>
+        .card {
+            width: 200px;
+            height: 200px;
+            border: 1px solid #ddd;
+            border-radius: 10px;
+            padding: 20px;
+            margin: 20px;
+            display: inline-block;
+        }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h2>Card 1</h2>
+        <p>This is the first card.</p>
+    </div>
+    <div class="card">
+        <h2>Card 2</h2>
+        <p>This is the second card.</p>
+    </div>
+    <div class="card">
+        <h2>Card 3</h2>
+        <p>This is the third card.</p>
+    </div>
+</body>
+</html>

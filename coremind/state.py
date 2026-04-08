@@ -3,13 +3,13 @@ from typing import Any, Dict, List, Literal, Optional, Set, TypedDict
 class CoreMindState(TypedDict, total=False):
     """
     CoreMind global state contract.
-    This is the ONLY shared state shape allowed across ATLAS, IRIS, and NEMESIS.
+    This is the ONLY shared state shape allowed across ATLAS, IRIS, NEMESIS, and NEXIS.
     """
 
     # =========================
     # Routing (LangGraph)
     # =========================
-    current_agent: Literal["atlas", "nemesis", "iris"]
+    current_agent: Literal["atlas", "nemesis", "iris","nexis"]
 
     # =========================
     # User / Intent

@@ -1,20 +1,42 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from pydantic import BaseModel
 from langchain_core.messages import HumanMessage
 
 from coremind.graph.graph import build_graph
 from coremind.state import CoreMindState
+from coremind.storage.session_store import SessionStore
+from typing import Optional, Dict, Any
+
+import asyncio
+import os
+import logging
+import requests
+
+# -------------------------------------------------
+# App + Graph Init
+# -------------------------------------------------
 
 app = FastAPI()
 graph = build_graph()
+SESSION_STORE = SessionStore()
 
-# 🔒 In-memory session store (OK for now)
-SESSIONS: dict[str, CoreMindState] = {}
+logger = logging.getLogger(__name__)
 
+# -------------------------------------------------
+# Telegram Config
+# -------------------------------------------------
+
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_API = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
+
+# -------------------------------------------------
+# Models
+# -------------------------------------------------
 
 class ChatRequest(BaseModel):
     session_id: str
     message: str
+    context: Optional[Dict[str, Any]] = None
 
 
 class ChatResponse(BaseModel):
@@ -22,36 +44,108 @@ class ChatResponse(BaseModel):
     session_id: str
 
 
+# -------------------------------------------------
+# Core Chat Endpoint (Internal / API)
+# -------------------------------------------------
+
 @app.post("/chat", response_model=ChatResponse)
-def chat(req: ChatRequest):
-    # -------------------------------------------------
-    # Load or create session
-    # -------------------------------------------------
-    if req.session_id in SESSIONS:
-        state = SESSIONS[req.session_id]
+async def chat(req: ChatRequest):
+
+    try:
+        
+        # ✅ Extract root_path safely
+        root_path = req.context.get("root_path") if req.context else None
+        
+        # ✅ Load session
+        state = await SESSION_STORE.load_session(req.session_id)
+        if root_path:
+            state["root_path"] = root_path
+        if not state:
+            state = {
+                "messages": [],
+                "objective": None,
+                "objective_queue": [],
+                "completed_objectives": [],
+            }
+
+        # ✅ CRITICAL FIX — reset execution state
+        state["objective"] = None
+        state["objective_queue"] = []
+        state["result"] = None
+        state["terminated"] = False
+       
+        # ✅ Append user message
         state["messages"].append(HumanMessage(content=req.message))
-    else:
-        state = CoreMindState(
-            messages=[HumanMessage(content=req.message)]
+
+        # ✅ Run graph
+        new_state = await asyncio.to_thread(graph.invoke, state)
+
+        # ✅ Persist root_path (optional but recommended)
+        new_state["root_path"] = root_path
+
+        # ✅ Save session
+        await SESSION_STORE.save_session(req.session_id, new_state)
+
+        # ✅ Extract reply
+        messages = new_state.get("messages", [])
+        reply = messages[-1].content if messages else ""
+
+        return ChatResponse(
+            reply=reply,
+            session_id=req.session_id
         )
 
-    # -------------------------------------------------
-    # Run LangGraph
-    # -------------------------------------------------
-    new_state = graph.invoke(state)
+    except Exception as e:
+        logger.exception("🔥 Chat API failed")
 
-    # -------------------------------------------------
-    # Persist updated state
-    # -------------------------------------------------
-    SESSIONS[req.session_id] = new_state
+        return ChatResponse(
+            reply=f"Error: {str(e)}",
+            session_id=req.session_id,
+        )
 
-    # -------------------------------------------------
-    # Extract assistant reply
-    # -------------------------------------------------
+
+# -------------------------------------------------
+# Telegram Webhook Endpoint
+# -------------------------------------------------
+@app.post("/telegram")
+async def telegram_webhook(request: Request):
+
+    try:
+        data = await request.json()
+    except Exception:
+        # If body is empty or not JSON
+        return {"ok": True}
+
+    logger.info(f"Incoming Telegram update: {data}")
+
+    if not data or "message" not in data:
+        return {"ok": True}
+
+    chat_id = str(data["message"]["chat"]["id"])
+    user_text = data["message"].get("text", "")
+
+    if not user_text:
+        return {"ok": True}
+
+    # Load session
+    state = await SESSION_STORE.load_session(chat_id)
+    state["messages"].append(HumanMessage(content=user_text))
+
+    new_state = await asyncio.to_thread(graph.invoke, state)
+
+    await SESSION_STORE.save_session(chat_id, new_state)
+
     messages = new_state.get("messages", [])
-    reply = messages[-1].content if messages else ""
+    reply = messages[-1].content if messages else "..."
 
-    return ChatResponse(
-        reply=reply,
-        session_id=req.session_id,
+    # Send reply back
+    requests.post(
+        f"{TELEGRAM_API}/sendMessage",
+        json={
+            "chat_id": chat_id,
+            "text": reply,
+        }
     )
+
+    return {"ok": True}
+

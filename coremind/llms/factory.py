@@ -39,45 +39,146 @@
 #             temperature=0,
 #         )
 
+from openai import OpenAI
 import os
-from langchain_huggingface import HuggingFaceEndpoint, ChatHuggingFace
+from typing import List, Optional
+
 from langchain_core.language_models import BaseChatModel
+from langchain_core.messages import AIMessage, BaseMessage
+from langchain_core.outputs import ChatResult, ChatGeneration
 
 
-class LLMFactory:
-    """
-    Explicit LLM ownership.
-    Replaced Ollama with HuggingFaceHub using Mistral-7B for all roles.
-    """
+from openai import OpenAI
+import os
+from typing import List, Optional
 
-    @staticmethod
-    def _mistral_model(temperature: float = 0.01) -> BaseChatModel:
-        # 1. Initialize the Endpoint (The connection to the model)
-        # Note: temperature must be > 0.0 for many HF models; 0.01 is effectively greedy.
-        llm = HuggingFaceEndpoint(
-            repo_id = "meta-llama/Llama-3.2-3B-Instruct" ,
-            huggingfacehub_api_token=os.getenv("HUGGINGFACEHUB_API_TOKEN"),
-            temperature=temperature,
-            max_new_tokens=512,
-            timeout=300
+from langchain_core.language_models import BaseChatModel
+from langchain_core.messages import AIMessage, BaseMessage
+from langchain_core.outputs import ChatResult, ChatGeneration
+from pydantic import Field
+
+
+class HFRouterChatModel(BaseChatModel):
+    model: str
+    temperature: float = 0.0
+    max_tokens: int = 512
+
+    # 👇 declare client as a private field
+    client: OpenAI = Field(default=None, exclude=True)
+
+    def __init__(self, **data):
+        super().__init__(**data)
+
+        #token = os.getenv("HF_TOKEN")
+        token ='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'
+        if not token:
+            raise ValueError("HF_TOKEN is not set")
+
+        # 👇 now allowed
+        object.__setattr__(
+            self,
+            "client",
+            OpenAI(
+                base_url="https://router.huggingface.co/v1",
+                api_key=token,
+            ),
         )
 
-        # 2. Wrap in ChatHuggingFace to return a BaseChatModel (System/Human/AI messages)
-        return ChatHuggingFace(llm=llm)
+    @property
+    def _llm_type(self) -> str:
+        return "hf_router"
+
+    def _generate(
+        self,
+        messages: List[BaseMessage],
+        stop: Optional[List[str]] = None,
+        **kwargs,
+    ) -> ChatResult:
+
+        print("✅ USING HF ROUTER:", self.model)
+
+        # Convert messages
+        formatted_messages = []
+        for m in messages:
+            role = "user"
+            if m.type == "ai":
+                role = "assistant"
+            elif m.type == "system":
+                role = "system"
+
+            formatted_messages.append({
+                "role": role,
+                "content": m.content
+            })
+
+        response = self.client.chat.completions.create(
+            model=self.model,
+            messages=formatted_messages,
+            temperature=self.temperature,
+            max_tokens=self.max_tokens,
+        )
+
+        content = response.choices[0].message.content
+
+        return ChatResult(
+            generations=[
+                ChatGeneration(
+                    message=AIMessage(content=content)
+                )
+            ]
+        )
+
+
+# -------------------------------------------------
+# 🧠 LLM Factory
+# -------------------------------------------------
+
+class LLMFactory:
 
     @staticmethod
     def atlas() -> BaseChatModel:
-        return LLMFactory._mistral_model(temperature=0.01)
+        return HFRouterChatModel(
+            model="meta-llama/Llama-3.1-70B-Instruct:scaleway",
+            temperature=0.01,
+            max_tokens=512,
+        )
 
     @staticmethod
     def atlasSummary() -> BaseChatModel:
-        return LLMFactory._mistral_model(temperature=0.01)
+        return HFRouterChatModel(
+            model="meta-llama/Llama-3.1-70B-Instruct:scaleway",
+            temperature=0.01,
+            max_tokens=512,
+        )
 
     @staticmethod
     def nemesis() -> BaseChatModel:
-        return LLMFactory._mistral_model(temperature=0.01)
+        return HFRouterChatModel(
+            model="meta-llama/Llama-3.1-70B-Instruct:scaleway",
+            temperature=0.0,
+            max_tokens=512,
+        )
 
     @staticmethod
     def iris() -> BaseChatModel:
-        return LLMFactory._mistral_model(temperature=0.01)
- 
+        return HFRouterChatModel(
+            model="meta-llama/Llama-3.1-70B-Instruct:scaleway",
+            temperature=0.01,
+            max_tokens=512,
+        )
+
+    @staticmethod
+    def argus() -> BaseChatModel:
+        return HFRouterChatModel(
+            model="meta-llama/Llama-3.1-70B-Instruct:scaleway",
+            temperature=0.0,
+            max_tokens=1024,
+        )
+
+    @staticmethod
+    def nexis() -> BaseChatModel:
+        return HFRouterChatModel(
+            model="meta-llama/Llama-3.1-70B-Instruct:scaleway",
+            temperature=0.0,
+            max_tokens=2048,
+        )
