@@ -3,6 +3,7 @@
 from typing import Dict, Any, List
 from datetime import datetime, timezone
 from coremind.agents.nemesis.tools.registry import TOOL_REGISTRY
+from coremind.integrations.gmail.client import get_gmail_service
 
 class ListRecentEmailsTool:
     """
@@ -26,8 +27,7 @@ class ListRecentEmailsTool:
         }
     }
 
-    def __init__(self, service):
-        self.service = service
+     
 
     # --------------------------------------------------
     # Date normalization (shared invariant)
@@ -67,6 +67,7 @@ class ListRecentEmailsTool:
     # --------------------------------------------------
 
     def run(self, args: Dict[str, Any]) -> List[Dict[str, Any]]:
+        self.service = get_gmail_service()
         """
         args is expected to contain:
         - limit (optional)

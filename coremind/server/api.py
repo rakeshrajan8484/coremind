@@ -11,7 +11,8 @@ import asyncio
 import os
 import logging
 import requests
-
+from dotenv import load_dotenv
+load_dotenv()
 # -------------------------------------------------
 # App + Graph Init
 # -------------------------------------------------
@@ -90,10 +91,10 @@ async def chat(req: ChatRequest):
 
         # ✅ Persist root_path (optional but recommended)
         new_state["root_path"] = root_path
-
+        print("new_state", new_state)
         # ✅ Save session
         await SESSION_STORE.save_session(req.session_id, new_state)
-
+        
         # ✅ Extract reply
         messages = new_state.get("messages", [])
         reply = messages[-1].content if messages else ""

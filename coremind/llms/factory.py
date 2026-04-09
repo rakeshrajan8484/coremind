@@ -42,20 +42,14 @@
 from openai import OpenAI
 import os
 from typing import List, Optional
-
-from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage, BaseMessage
-from langchain_core.outputs import ChatResult, ChatGeneration
-
-
-from openai import OpenAI
-import os
-from typing import List, Optional
+from dotenv import load_dotenv
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.outputs import ChatResult, ChatGeneration
 from pydantic import Field
+
+load_dotenv()
 
 
 class HFRouterChatModel(BaseChatModel):
@@ -69,10 +63,10 @@ class HFRouterChatModel(BaseChatModel):
     def __init__(self, **data):
         super().__init__(**data)
 
-        #token = os.getenv("HF_TOKEN")
-        token ='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'
+        token = os.getenv("HUGGINGFACEHUB_API_TOKEN")
+        # token ='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'
         if not token:
-            raise ValueError("HF_TOKEN is not set")
+            raise ValueError("HUGGINGFACEHUB_API_TOKEN is not set")
 
         # 👇 now allowed
         object.__setattr__(

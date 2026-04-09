@@ -1,5 +1,5 @@
 from typing import Dict, Any, Optional
-
+from coremind.integrations.gmail.client import get_gmail_service
 
 class SendDraftTool:
     name = "send_draft"
@@ -16,8 +16,7 @@ class SendDraftTool:
         }
     }
 
-    def __init__(self, service):
-        self.service = service
+    
 
     def _get_latest_draft_id(self) -> str:
         """
@@ -59,6 +58,7 @@ class SendDraftTool:
         return latest_draft_id
 
     def run(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        self.service = get_gmail_service()
         draft_id = args.get("id")
 
         if not draft_id:

@@ -124,14 +124,17 @@ def _parse_json(content: str) -> Dict[str, Any]:
 def _summarize_result(objective: Dict[str, Any], result: Dict[str, Any]) -> str:
     log.info(
         "Summarizing result | intent=%s | status=%s",
-        objective.get("intent"),
+        objective.get("intent") if objective else None,
         result.get("status"),
     )
 
     if result.get("status") != "success":
+        summary = result.get("summary")
+        if summary:
+            return f"I couldn’t complete that action. Reason: {summary}"
         return "I couldn’t complete that action."
 
-    intent = objective.get("intent")
+    intent = objective.get("intent") if objective else None
 
     if intent == "update_read_state":
         return "The email has been marked as read."

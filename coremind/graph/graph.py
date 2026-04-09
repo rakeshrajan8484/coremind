@@ -14,6 +14,7 @@ def route_from_atlas(state: dict):
     if obj:
         # 🆕 NEXIS routing
         if obj.get("domain", "").lower() == "code":
+            constraints = obj.get("constraints", {})
             # 🔥 If path is missing or invalid → go to IRIS
             path = constraints.get("path")
 
@@ -60,24 +61,36 @@ def build_graph():
     graph.add_node("atlas", atlas_node)
     graph.add_node("nemesis", make_nemesis_node())
     graph.add_node("nexis", make_nexis_node())
-
+    graph.add_node("iris", iris_node)
     graph.set_entry_point("atlas")
 
     graph.add_conditional_edges(
-    "atlas",
-    route_from_atlas,
-    {
-        "atlas": "atlas",
-        "nexis": "nexis",
-        "nemesis": "nemesis",  # ✅ add back
-        END: END,
-    },
-)
-   
+        "atlas",
+        route_from_atlas,
+        {
+            "atlas": "atlas",
+            "nexis": "nexis",
+            "nemesis": "nemesis",
+            "iris": "iris",
+            END: END,
+        },
+    )
 
     graph.add_conditional_edges(
         "nexis",
         route_from_nexis,
+        {"atlas": "atlas"},
+    )
+
+    graph.add_conditional_edges(
+        "nemesis",
+        route_from_nemesis,
+        {"atlas": "atlas"},
+    )
+
+    graph.add_conditional_edges(
+        "iris",
+        route_from_iris,
         {"atlas": "atlas"},
     )
 

@@ -39,7 +39,8 @@
 # coremind/main.py
 
 import uvicorn
-
+from dotenv import load_dotenv
+load_dotenv()
 def main():
     uvicorn.run(
         "coremind.server.api:app",

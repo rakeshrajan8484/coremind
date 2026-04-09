@@ -2,6 +2,7 @@
 
 from typing import Dict, Any, List
 from datetime import datetime, timezone
+from coremind.integrations.gmail.client import get_gmail_service
 
 from coremind.agents.nemesis.tools.registry import TOOL_REGISTRY
 
@@ -17,8 +18,7 @@ class CheckUnreadTool:
         }
     }
 
-    def __init__(self, service):
-        self.service = service
+    
 
     # --------------------------------------------------
     # Date normalization (shared invariant)
@@ -58,6 +58,7 @@ class CheckUnreadTool:
     # --------------------------------------------------
 
     def run(self, args: Dict[str, Any]) -> List[Dict[str, Any]]:
+        self.service = get_gmail_service()
         limit = int(args["limit"]) if "limit" in args else 10
 
         response = (

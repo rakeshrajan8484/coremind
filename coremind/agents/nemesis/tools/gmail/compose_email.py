@@ -3,6 +3,7 @@ from email.message import EmailMessage
 
 from coremind.agents.nemesis.tools.registry import TOOL_REGISTRY
 from coremind.logging import get_logger
+from coremind.integrations.gmail.client import get_gmail_service
 
 log = get_logger("NEMESIS.TOOLS.GMAIL.COMPOSE")
 
@@ -35,10 +36,10 @@ class ComposeEmailTool:
         },
     }
 
-    def __init__(self, service):
-        self.service = service
+    
 
     def run(self, args: dict):
+        self.service = get_gmail_service()
         to_email = args["to"]
         body = args["body"]
         subject = args.get("subject", "Mail from CoreMind")

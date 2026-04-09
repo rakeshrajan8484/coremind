@@ -1,99 +1,57 @@
-from pathlib import Path
-import pickle
-import json
 import os
-import tempfile
+import json
+from functools import lru_cache
 
-from googleapiclient.discovery import build
-from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
-from google.auth.exceptions import RefreshError
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import InstalledAppFlow
+from googleapiclient.discovery import build
 
 SCOPES = ["https://www.googleapis.com/auth/gmail.modify"]
 
-COREMIND_DIR = Path.home() / ".coremind"
-TOKEN_PATH = COREMIND_DIR / "gmail_token.pkl"
 
-
-def _get_creds_file_from_env():
-    """
-    Reads Gmail credentials JSON from environment variable
-    and writes it to a temporary file (required by Google lib).
-    """
-    creds_json = os.environ.get("GMAIL_CREDENTIALS_JSON")
-
-    if not creds_json:
-        return None
-
-    data = json.loads(creds_json)
-
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".json")
-    with open(tmp.name, "w") as f:
-        json.dump(data, f)
-
-    return tmp.name
-
-
+@lru_cache(maxsize=1)
 def get_gmail_service():
     """
-    Infrastructure function.
-    Handles OAuth and returns an authenticated Gmail service client.
+    Gmail client using OAuth 2.0 User Credentials.
+    - Prompts user in browser on first run.
+    - Saves and refreshes tokens locally to gmail_token.json.
     """
-
     creds = None
-
-    # --------------------------------------------------
-    # 🔒 Load existing token
-    # --------------------------------------------------
-    if TOKEN_PATH.exists():
-        with open(TOKEN_PATH, "rb") as token:
-            creds = pickle.load(token)
-
-        if not creds.scopes or not set(SCOPES).issubset(set(creds.scopes)):
-            creds = None
-
-    # --------------------------------------------------
-    # 🔒 Ensure valid credentials
-    # --------------------------------------------------
+    token_path = "gmail_token.json"
+    
+    if os.path.exists(token_path):
+        creds = Credentials.from_authorized_user_file(token_path, SCOPES)
+    
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             try:
                 creds.refresh(Request())
-            except RefreshError:
+            except Exception as e:
+                print(f"Token refresh failed: {e}")
                 creds = None
 
-        if not creds:
-            creds_file = _get_creds_file_from_env()
+        if creds is None:
+            credential_json = os.environ.get("GMAIL_CREDENTIAL_JSON")
+            if not credential_json:
+                raise RuntimeError("Missing GMAIL_CREDENTIAL_JSON in environment")
+            
+            try:
+                client_config = json.loads(credential_json)
+            except json.JSONDecodeError:
+                raise RuntimeError("Invalid JSON in GMAIL_CREDENTIAL_JSON")
+                
+            flow = InstalledAppFlow.from_client_config(client_config, SCOPES)
+            # This opens the browser for authorization
+            creds = flow.run_local_server(port=0)
+            
+        # Save the credentials for the next run
+        with open(token_path, "w") as token_file:
+            token_file.write(creds.to_json())
 
-            if not creds_file:
-                raise RuntimeError(
-                    "GMAIL_CREDENTIALS_JSON not set in environment"
-                )
-
-            flow = InstalledAppFlow.from_client_secrets_file(
-                creds_file,
-                SCOPES,
-            )
-
-            print("[GMAIL] Waiting for OAuth consent...")
-
-            creds = flow.run_local_server(
-                port=0,
-                open_browser=False,  # 🔥 IMPORTANT for serverless
-                prompt="consent",
-                include_granted_scopes=False,
-            )
-
-        COREMIND_DIR.mkdir(exist_ok=True)
-        with open(TOKEN_PATH, "wb") as token:
-            pickle.dump(creds, token)
-
-    # --------------------------------------------------
-    # 🔒 HARD SAFETY CHECK
-    # --------------------------------------------------
-    if "https://www.googleapis.com/auth/gmail.modify" not in creds.scopes:
-        raise RuntimeError(
-            f"Gmail modify scope NOT granted. Actual scopes: {creds.scopes}"
-        )
-
-    return build("gmail", "v1", credentials=creds)
+    return build(
+        "gmail",
+        "v1",
+        credentials=creds,
+        cache_discovery=False,
+    )

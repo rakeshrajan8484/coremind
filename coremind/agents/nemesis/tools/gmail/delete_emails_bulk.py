@@ -1,6 +1,7 @@
 from typing import Dict, Any, List
 from coremind.agents.nemesis.tools.registry import TOOL_REGISTRY
 from coremind.logging import get_logger
+from coremind.integrations.gmail.client import get_gmail_service
 
 log = get_logger("NEMESIS.TOOLS.GMAIL.DELETE_BULK")
 
@@ -31,8 +32,7 @@ class DeleteEmailsBulkTool:
         },
     }
 
-    def __init__(self, service):
-        self.service = service
+     
 
     def _search_ids(self, sender: str) -> List[str]:
         query = f"from:{sender}"
@@ -50,6 +50,7 @@ class DeleteEmailsBulkTool:
         return ids
 
     def run(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        self.service = get_gmail_service()
         ids: List[str] | None = args.get("ids")
         sender: str | None = args.get("sender")
 

@@ -5,7 +5,7 @@ from typing import Dict, Any
 from datetime import datetime, timezone
 
 from tzlocal import get_localzone
-
+from coremind.integrations.gmail.client import get_gmail_service
 from coremind.agents.nemesis.tools.registry import TOOL_REGISTRY
 
 
@@ -20,8 +20,7 @@ class GetEmailContentTool:
         }
     }
 
-    def __init__(self, service):
-        self.service = service
+     
 
     # --------------------------------------------------
     # Gmail payload normalization
@@ -102,6 +101,7 @@ class GetEmailContentTool:
     # --------------------------------------------------
 
     def run(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        self.service = get_gmail_service()
         message_id = args.get("id")
         if not message_id:
             raise ValueError("Missing required argument: id")

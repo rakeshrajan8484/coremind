@@ -1,6 +1,7 @@
 # coremind/agents/nemesis/tools/gmail/mark_email.py
 
 from coremind.logging import get_logger
+from coremind.integrations.gmail.client import get_gmail_service
 
 log = get_logger("NEMESIS.TOOL.MARK_EMAIL")
 
@@ -21,10 +22,10 @@ class MarkEmailTool:
         },
     }
 
-    def __init__(self, service):
-        self.service = service
+    
 
     def run(self, args: dict):
+        self.service = get_gmail_service()
         msg_id = args.get("id")
         if not msg_id:
             raise ValueError("mark_email requires message id")

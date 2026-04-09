@@ -1,5 +1,6 @@
 from coremind.agents.nemesis.tools.registry import TOOL_REGISTRY
 from coremind.logging import get_logger
+from coremind.integrations.gmail.client import get_gmail_service
 
 log = get_logger("NEMESIS.TOOLS.GMAIL.DELETE")
 
@@ -19,10 +20,10 @@ class DeleteEmailTool:
         }
     }
 
-    def __init__(self, service):
-        self.service = service
+     
 
     def run(self, args: dict):
+        self.service = get_gmail_service()
         message_id = args.get("id")
         log.error("DELETE TOOL SCOPES: %s", self.service._http.credentials.scopes)
 

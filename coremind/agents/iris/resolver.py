@@ -278,9 +278,37 @@ def iris_node(state: Dict[str, Any]) -> Dict[str, Any]:
     # ==================================================
     if domain == "code":
         constraints = objective.get("constraints") or {}
+        target = objective.get("target") or {}
+
         path_query = constraints.get("path")
+        selector = target.get("selector")
 
         try:
+            # 🧠 Normalize root (IMPORTANT FIX)
+            if root.endswith(".html") or root.endswith(".py"):
+                import os
+                root = os.path.dirname(root)
+
+            # 🧠 CASE 1: NEW FILE → skip resolution
+            if selector == "new":
+                import os
+
+                # Normalize path
+                if not path_query.endswith(".html"):
+                    path_query = path_query.rstrip("/") + "/index.html"
+
+                resolved = os.path.join(root, path_query.lstrip("/"))
+
+                log.info(f"IRIS (NEW FILE) → '{resolved}'")
+
+                objective["constraints"]["path"] = resolved
+
+                return {
+                    **state,
+                    "objective": objective
+                }
+
+            # 🧠 CASE 2: EXISTING FILE → resolve normally
             resolved = resolve_file_path(root, path_query)
 
             if not resolved:

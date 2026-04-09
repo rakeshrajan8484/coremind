@@ -3,6 +3,7 @@
 from typing import Dict, Any
 from coremind.agents.nemesis.tools.registry import TOOL_REGISTRY
 from coremind.logging import get_logger
+from coremind.integrations.gmail.client import get_gmail_service
 
 log = get_logger("NEMESIS.TOOL.MARK_ALL_READ")
 
@@ -40,10 +41,10 @@ class MarkAllReadTool:
         },
     })
 
-    def __init__(self, service):
-        self.service = service
+    
 
     def run(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        self.service = get_gmail_service()
         # Support marking by explicit ids, by sender, or by listing recent unread.
         if "ids" in args:
             message_ids = list(args["ids"]) or []
