@@ -101,7 +101,9 @@ class GetEmailContentTool:
     # --------------------------------------------------
 
     def run(self, args: Dict[str, Any]) -> Dict[str, Any]:
-        self.service = get_gmail_service()
+
+        
+        self.service = get_gmail_service('user_id')
         message_id = args.get("id")
         if not message_id:
             raise ValueError("Missing required argument: id")

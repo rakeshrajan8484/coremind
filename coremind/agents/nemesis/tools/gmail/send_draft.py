@@ -58,7 +58,9 @@ class SendDraftTool:
         return latest_draft_id
 
     def run(self, args: Dict[str, Any]) -> Dict[str, Any]:
-        self.service = get_gmail_service()
+
+        
+        self.service = get_gmail_service('user_id')
         draft_id = args.get("id")
 
         if not draft_id:

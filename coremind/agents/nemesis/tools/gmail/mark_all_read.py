@@ -44,7 +44,9 @@ class MarkAllReadTool:
     
 
     def run(self, args: Dict[str, Any]) -> Dict[str, Any]:
-        self.service = get_gmail_service()
+
+        
+        self.service = get_gmail_service('user_id')
         # Support marking by explicit ids, by sender, or by listing recent unread.
         if "ids" in args:
             message_ids = list(args["ids"]) or []

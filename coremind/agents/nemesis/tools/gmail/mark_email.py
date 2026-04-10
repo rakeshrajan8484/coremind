@@ -25,7 +25,9 @@ class MarkEmailTool:
     
 
     def run(self, args: dict):
-        self.service = get_gmail_service()
+
+        
+        self.service = get_gmail_service('user_id')
         msg_id = args.get("id")
         if not msg_id:
             raise ValueError("mark_email requires message id")

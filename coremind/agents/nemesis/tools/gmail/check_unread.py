@@ -58,7 +58,9 @@ class CheckUnreadTool:
     # --------------------------------------------------
 
     def run(self, args: Dict[str, Any]) -> List[Dict[str, Any]]:
-        self.service = get_gmail_service()
+         
+        
+        self.service = get_gmail_service('user_id')
         limit = int(args["limit"]) if "limit" in args else 10
 
         response = (

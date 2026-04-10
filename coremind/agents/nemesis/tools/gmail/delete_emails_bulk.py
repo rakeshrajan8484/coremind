@@ -50,7 +50,9 @@ class DeleteEmailsBulkTool:
         return ids
 
     def run(self, args: Dict[str, Any]) -> Dict[str, Any]:
-        self.service = get_gmail_service()
+
+        
+        self.service = get_gmail_service('user_id')
         ids: List[str] | None = args.get("ids")
         sender: str | None = args.get("sender")
 

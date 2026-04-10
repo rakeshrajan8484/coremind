@@ -67,7 +67,9 @@ class ListRecentEmailsTool:
     # --------------------------------------------------
 
     def run(self, args: Dict[str, Any]) -> List[Dict[str, Any]]:
-        self.service = get_gmail_service()
+
+        
+        self.service = get_gmail_service('user_id')
         """
         args is expected to contain:
         - limit (optional)

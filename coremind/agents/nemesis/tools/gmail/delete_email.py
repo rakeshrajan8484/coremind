@@ -23,7 +23,9 @@ class DeleteEmailTool:
      
 
     def run(self, args: dict):
-        self.service = get_gmail_service()
+
+        
+        self.service = get_gmail_service('user_id')
         message_id = args.get("id")
         log.error("DELETE TOOL SCOPES: %s", self.service._http.credentials.scopes)
 

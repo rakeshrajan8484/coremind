@@ -39,7 +39,9 @@ class ComposeEmailTool:
     
 
     def run(self, args: dict):
-        self.service = get_gmail_service()
+
+        
+        self.service = get_gmail_service('user_id')
         to_email = args["to"]
         body = args["body"]
         subject = args.get("subject", "Mail from CoreMind")

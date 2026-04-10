@@ -111,7 +111,7 @@ compose_message:
 - constraints MUST include:
   - "to"
   - "body" OR "instruction"
-- compose_message MUST NEVER reference existing messages
+- compose_message MUST NEVER reference existing messages. If prompt has the message in quotes, use that as email body. if not create a content for the specified instruction.
 
 send_draft:
 - operation.type  = "send"
