@@ -18,6 +18,7 @@ load_dotenv()
 # -------------------------------------------------
 
 app = FastAPI()
+
 graph = build_graph()
 SESSION_STORE = SessionStore()
 
@@ -116,6 +117,7 @@ async def chat(req: ChatRequest):
 # -------------------------------------------------
 # Telegram Webhook Endpoint
 # -------------------------------------------------
+@app.post("/api/telegram")
 @app.post("/telegram")
 async def telegram_webhook(request: Request):
 
@@ -138,9 +140,27 @@ async def telegram_webhook(request: Request):
 
     # Load session
     state = await SESSION_STORE.load_session(chat_id)
+    if not state:
+        state = {
+            "messages": [],
+            "objective": None,
+            "objective_queue": [],
+            "completed_objectives": [],
+        }
+
+    # ✅ CRITICAL FIX — reset execution state
+    state["objective"] = None
+    state["objective_queue"] = []
+    state["result"] = None
+    state["terminated"] = False
+
     state["messages"].append(HumanMessage(content=user_text))
 
-    new_state = await asyncio.to_thread(graph.invoke, state)
+    try:
+        new_state = await asyncio.to_thread(graph.invoke, state)
+    except Exception as e:
+        logger.exception("🔥 Telegram Webhook Graph execution failed")
+        return {"ok": True} # Returning 200 to telegram prevents retry-loops
 
     await SESSION_STORE.save_session(chat_id, new_state)
 
@@ -158,3 +178,7 @@ async def telegram_webhook(request: Request):
 
     return {"ok": True}
 
+
+@app.get("/")
+async def root():
+    return {"status": "running"}
