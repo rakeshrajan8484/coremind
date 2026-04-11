@@ -52,3 +52,5 @@ google-auth-oauthlib>=1.2.0
 google-api-python-client>=2.120.0
 openai
 psycopg2-binary
+psycopg2
+asyncpg
