@@ -113,7 +113,6 @@ async def chat(req: ChatRequest):
             session_id=req.session_id,
         )
 
-
 # -------------------------------------------------
 # Telegram Webhook Endpoint
 # -------------------------------------------------
@@ -121,10 +120,12 @@ async def chat(req: ChatRequest):
 @app.post("/telegram")
 async def telegram_webhook(request: Request):
 
+    # -----------------------------
+    # Parse request safely
+    # -----------------------------
     try:
         data = await request.json()
     except Exception:
-        # If body is empty or not JSON
         return {"ok": True}
 
     logger.info(f"Incoming Telegram update: {data}")
@@ -138,8 +139,24 @@ async def telegram_webhook(request: Request):
     if not user_text:
         return {"ok": True}
 
-    # Load session
-    state = await SESSION_STORE.load_session(chat_id)
+    # -----------------------------
+    # ✅ Get session store (lazy init)
+    # -----------------------------
+    try:
+        store = await request.app.state.get_session_store()
+    except Exception as e:
+        logger.error(f"❌ Session store init failed: {e}")
+        store = None
+
+    # -----------------------------
+    # Load session (safe fallback)
+    # -----------------------------
+    try:
+        state = await store.load_session(chat_id) if store else None
+    except Exception as e:
+        logger.error(f"❌ Load session failed: {e}")
+        state = None
+
     if not state:
         state = {
             "messages": [],
@@ -148,33 +165,57 @@ async def telegram_webhook(request: Request):
             "completed_objectives": [],
         }
 
-    # ✅ CRITICAL FIX — reset execution state
+    # -----------------------------
+    # Reset execution state
+    # -----------------------------
     state["objective"] = None
     state["objective_queue"] = []
     state["result"] = None
     state["terminated"] = False
 
+    # -----------------------------
+    # Add user message
+    # -----------------------------
     state["messages"].append(HumanMessage(content=user_text))
 
+    # -----------------------------
+    # Run graph safely
+    # -----------------------------
     try:
         new_state = await asyncio.to_thread(graph.invoke, state)
-    except Exception as e:
+    except Exception:
         logger.exception("🔥 Telegram Webhook Graph execution failed")
-        return {"ok": True} # Returning 200 to telegram prevents retry-loops
+        return {"ok": True}  # prevent Telegram retry loop
 
-    await SESSION_STORE.save_session(chat_id, new_state)
+    # -----------------------------
+    # Save session (non-blocking safe)
+    # -----------------------------
+    if store:
+        try:
+            await store.save_session(chat_id, new_state)
+        except Exception as e:
+            logger.error(f"❌ Save session failed: {e}")
 
+    # -----------------------------
+    # Extract reply
+    # -----------------------------
     messages = new_state.get("messages", [])
     reply = messages[-1].content if messages else "..."
 
-    # Send reply back
-    requests.post(
-        f"{TELEGRAM_API}/sendMessage",
-        json={
-            "chat_id": chat_id,
-            "text": reply,
-        }
-    )
+    # -----------------------------
+    # Send reply to Telegram (safe)
+    # -----------------------------
+    try:
+        requests.post(
+            f"{TELEGRAM_API}/sendMessage",
+            json={
+                "chat_id": chat_id,
+                "text": reply,
+            },
+            timeout=5,  # prevent hanging
+        )
+    except Exception as e:
+        logger.error(f"❌ Telegram send failed: {e}")
 
     return {"ok": True}
 

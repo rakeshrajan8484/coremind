@@ -16,7 +16,7 @@ from supabase import create_client
 SCOPES = ["https://www.googleapis.com/auth/gmail.modify"]
 
 SUPABASE_URL = os.environ["SUPABASE_PROJECT_URL"]
-SUPABASE_KEY = os.environ["SUPABASE_PUBLISHABLE_KEY"]
+SUPABASE_KEY = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
