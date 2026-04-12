@@ -142,8 +142,16 @@ def _summarize_result(objective: Dict[str, Any], result: Dict[str, Any]) -> str:
         return "The email has been deleted."
     if intent == "send_draft":
         return "The email has been sent."
-    if intent == "summarize_message":
-        return "Here is the summary of the email."
+    if intent == "compose_message":
+        return "The email has been drafted."
+    if intent == "generate_code":
+        return "The code has been generated."
+    if intent == "modify_code":
+        return "The code has been modified."
+    if intent == "read_code":
+        return "The code has been read."
+    if intent == "switch_power":
+        return "The device has been switched."
 
     return "Action completed successfully."
 
@@ -437,7 +445,7 @@ def atlas_node(state: Dict[str, Any]) -> Dict[str, Any]:
             }
 
         summary = _summarize_result(current_obj, result)
-        log.info("Execution complete, terminating ATLAS")
+        log.info("Execution complete, terminating ATLAS", summary)
 
         return {
             **state,
@@ -485,15 +493,21 @@ def atlas_node(state: Dict[str, Any]) -> Dict[str, Any]:
 
         objectives = raw.get("objectives", [])
 
-        # 🔥 FIX: handle empty objectives
+        # 🔥 FIX: handle empty objectives → DIRECT RESPONSE
         if not objectives:
-            log.warning("⚠️ Planner returned no objectives")
+            log.info("ℹ️ No objectives → switching to DIRECT response mode")
+
+            # Call Atlas in RESPONSE MODE (no tools, just answer)
+            prompt = f"""
+            You can respond to the user directly.
+            """
+            direct_response = planner_llm.invoke(
+                [SystemMessage(prompt), HumanMessage(state["utterance"])]
+            )
 
             return {
                 **state,
-                "messages": messages + [
-                    AIMessage("I couldn’t find an action to perform. Can you rephrase?")
-                ],
+                "messages": messages + [direct_response],
                 "objective": None,
                 "objective_queue": [],
                 "terminated": True,

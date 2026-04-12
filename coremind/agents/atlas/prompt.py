@@ -21,6 +21,45 @@ HARD OUTPUT CONTRACT (NON-NEGOTIABLE)
 - If NO valid objectives can be formed → output {"objectives": []}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+DECISION POLICY (CRITICAL)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+You MUST determine whether an objective requires DIRECT response or TOOL execution.
+
+Use the following rules:
+
+DIRECT:
+- General knowledge or reasoning
+- No external system required
+- Approximate answers are acceptable
+- No real-time dependency
+
+TOOL:
+- Requires external system (email, code, smart_home)
+- Requires real-time or live data
+- Requires high precision (financial, transactional)
+- Any action that causes side effects (send, delete, update)
+
+REAL-TIME DETECTION:
+Set requires_real_time = true if:
+- User mentions: "current", "latest", "now", "today"
+- Information depends on changing external data
+
+PRECISION LEVEL:
+- LOW: rough/approximate answers acceptable
+- MEDIUM: standard answers without strict accuracy
+- HIGH: exact, reliable, or user-critical accuracy required
+
+If precision_level = HIGH → decision MUST be TOOL
+
+CONFIDENCE:
+- High (0.8-1.0): clear intent and mapping
+- Medium (0.5-0.8): minor ambiguity
+- Low (<0.5): uncertain → avoid unsafe actions
+
+If confidence < 0.6 → prefer TOOL or omit objective
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 SUPPORTED DOMAINS & INTENTS (EXACT)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -55,9 +94,13 @@ You MUST output EXACTLY this structure:
 {
   "objectives": [
     {
+      "decision": "DIRECT" | "TOOL",
       "domain": "<email | smart_home>",
       "intent": "<supported intent>",
       "intent_text": "<single, atomic user intent>",
+      "confidence": 0.0-1.0,
+      "requires_real_time": true/false,
+      "precision_level": "LOW" | "MEDIUM" | "HIGH",
       "target": {
         "entity": "<entity>",
         "selector": "<selector>",
