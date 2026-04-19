@@ -145,6 +145,27 @@ SEND_DRAFT = ObjectiveSpec(
 )
 
 # -------------------------------------------------
+# COUNT MESSAGES
+# -------------------------------------------------
+
+COUNT_EMAILS = ObjectiveSpec(
+    domain="email",
+    intent="count",
+    description="Count email messages matching criteria",
+
+    allowed_selectors=["all", "subset"],
+    required_filter_fields={
+        "all": [],
+        "subset": [],
+    },
+
+    operation_type="count",
+    allowed_operation_values=["messages"],
+
+    requires_concrete_identity=False,
+)
+
+# -------------------------------------------------
 # DELETE BULK MESSAGES
 # -------------------------------------------------
 
@@ -205,6 +226,7 @@ OBJECTIVE_REGISTRY = {
     ("email", "send_message"): SEND_MESSAGE,
     ("email", "send_draft"): SEND_DRAFT,
     ("email", "delete_messages_bulk"): DELETE_BULK_MESSAGES,
+    ("email", "count"): COUNT_EMAILS,
 
     # DISCOVERY
     ("entity", "retrieve_candidates"): RETRIEVE_CANDIDATES,

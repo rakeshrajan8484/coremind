@@ -19,14 +19,15 @@ _DATE_FORMATS = [
     "%Y-%m-%d",     # 2026-01-10
 ]
 
-KNOWN_ENTITIES = {"message", "thread", "draft"}
+KNOWN_ENTITIES = {"message", "thread", "draft", "emails"}
 
 DISCOVERY_REQUIRED_INTENTS = {
     "update_read_state",
     "delete_message",
     "summarize",
     "send_draft",
-    "delete_messages_bulk"
+    "delete_messages_bulk",
+    "count"
 }
 
 ORDINAL_MAP = {
@@ -161,6 +162,10 @@ def _summarize_result(objective: Dict[str, Any], result: Dict[str, Any]) -> str:
         return "The code has been read."
     if intent == "switch_power":
         return "The device has been switched."
+    if intent == "count":
+        data = result.get("artifacts", {}).get("raw_data", {})
+        count = data.get("count", 0)
+        return f"You have {count} emails matching that criteria."
 
     return "Action completed successfully."
 
@@ -181,7 +186,7 @@ def _normalize_selector(selector: Any) -> Dict[str, Any]:
         s = selector.lower()
         if s == "last":
             return {"type": "last"}
-        if s == "all":
+        if s == "all" or s == "subset":
             return {"type": "all"}
         if s in ORDINAL_MAP:
             return {"type": "ordinal", "value": ORDINAL_MAP[s]}
@@ -200,6 +205,9 @@ def _normalize_filter(raw: Dict[str, Any]) -> Dict[str, Any]:
             s = s.replace(word, "")
         s = s.replace("email", "").strip()
         s = s.replace("from ", "").strip()
+        # Robustly handle the leftover 's' if 'emails' was used
+        if s == "s":
+            s = ""
         if s:
             filt["sender"] = s
 
@@ -346,7 +354,7 @@ def _apply_selector(candidates: List[Dict[str, Any]], selector: Dict[str, Any]) 
     if stype == "last":
         return [candidates[-1]["id"]]
 
-    if stype == "all":
+    if stype == "all" or stype == "subset":
         return [c["id"] for c in candidates]
 
     raise RuntimeError(f"Unknown selector type: {stype}")
@@ -440,6 +448,19 @@ def atlas_node(state: Dict[str, Any]) -> Dict[str, Any]:
 
 
             log.info("Resolved message IDs: %s", resolved_ids)
+
+            if original.get("intent") == "count":
+                return {
+                    **state,
+                    "objective": None,
+                    "result": {
+                        "status": "success",
+                        "artifacts": {
+                            "raw_data": {"count": len(resolved_ids)}
+                        }
+                    },
+                    "current_agent": "atlas"
+                }
 
             original["target"] = {
                 "entity": "message",

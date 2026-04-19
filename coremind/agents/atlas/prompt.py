@@ -74,6 +74,7 @@ DOMAIN: email
 - "compose_message"
 - "send_draft"
 - "delete_messages_bulk" (IDs only)
+- "count"
 
 DOMAIN: smart_home
 ------------------
@@ -160,6 +161,10 @@ send_draft:
 - operation.type  = "send"
 - operation.value = "draft"
 - selector MUST be "single"
+
+count:
+- operation.type  = "count"
+- operation.value = "messages"
 
 ⚠️ ENTITY-BASED EMAIL RULE:
 - operation.type MUST ALWAYS be "retrieve"
