@@ -24,7 +24,7 @@ KNOWN_ENTITIES = {"message", "thread", "draft"}
 DISCOVERY_REQUIRED_INTENTS = {
     "update_read_state",
     "delete_message",
-    "summarize_message",
+    "summarize",
     "send_draft",
     "delete_messages_bulk"
 }
@@ -135,6 +135,15 @@ def _summarize_result(objective: Dict[str, Any], result: Dict[str, Any]) -> str:
         return "I couldn’t complete that action."
 
     intent = objective.get("intent") if objective else None
+
+    if intent == "summarize":
+        data = result.get("artifacts", {}).get("raw_data", {})
+        body = data.get("body")
+        if body:
+            summary_llm = LLMFactory.atlasSummary()
+            prompt = f"Summarize the following email concisely:\n\n{body}"
+            return summary_llm.invoke(prompt).content.strip()
+        return "The email has been summarized."
 
     if intent == "update_read_state":
         return "The email has been marked as read."

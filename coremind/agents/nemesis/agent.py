@@ -330,7 +330,9 @@ class NemesisAgent:
 
         if tool_name in {"delete_email", "mark_email", "get_email_content"}:
             if "id" not in args:
-                msg_id = filter_.get("id") or resolved_id
+                ids = filter_.get("ids")
+                id_from_filter = ids[0] if isinstance(ids, list) and ids else None
+                msg_id = filter_.get("id") or id_from_filter or resolved_id
                 if msg_id:
                     args["id"] = msg_id
 
@@ -345,9 +347,12 @@ class NemesisAgent:
 
         target = objective.get("target") or {}
         filter_ = target.get("filter") or {}
+        ids = filter_.get("ids")
+        id_from_ids = ids[0] if isinstance(ids, list) and ids else None
 
         return (
             filter_.get("id")
+            or id_from_ids
             or filter_.get("draft_id")
             or filter_.get("thread_id")
         )
@@ -477,14 +482,29 @@ Rules:
             args = step.get("arguments") or step.get("args") or {}
             if step.get("tool") == "mark_all_read" and "id" in args:
                 args.setdefault("ids", [args.pop("id")])
-                # normalize to 'arguments' key
+                step["arguments"] = args
+
+        if tool == "delete_email":
+            if isinstance(filter_.get("ids"), list) and len(filter_["ids"]) > 1:
+                step["tool"] = "delete_emails_bulk"
+            elif filter_.get("sender") or filter_.get("from"):
+                step["tool"] = "delete_emails_bulk"
+
+            # Migrate 'id' -> 'ids' if switched to bulk
+            args = step.get("arguments") or step.get("args") or {}
+            if step.get("tool") == "delete_emails_bulk" and "id" in args:
+                args.setdefault("ids", [args.pop("id")])
                 step["arguments"] = args
 
         return step
 
     def _retrieve_candidates(self, objective):
-        tool = self.tools.get("check_unread")
-        raw = tool.run({"limit": 10})
+        tool = self.tools.get("list_recent_emails")
+        # 🔒 Pass target filters to enable pre-filtering of both read/unread emails
+        raw = tool.run({
+            "limit": 10,
+            "target": objective.get("target", {})
+        })
         return [email_to_candidate(m) for m in raw]
 
     def _validate_state(self, state):

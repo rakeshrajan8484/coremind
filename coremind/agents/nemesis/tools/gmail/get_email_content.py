@@ -1,7 +1,8 @@
 # coremind/agents/nemesis/tools/gmail/get_email_content.py
 
 import base64
-from typing import Dict, Any
+import re
+from typing import Dict, Any, List
 from datetime import datetime, timezone
 
 from tzlocal import get_localzone
@@ -56,26 +57,51 @@ class GetEmailContentTool:
             for h in message.get("payload", {}).get("headers", [])
         }
 
-        def extract_body(payload: Dict[str, Any]) -> str:
+        def _clean_html(html: str) -> str:
+            # 1. Remove style and script tags content
+            html = re.sub(r'<(style|script)[^>]*>.*?</\1>', '', html, flags=re.DOTALL | re.IGNORECASE)
+            
+            # 2. Replace common block tags with newlines for better readable structure
+            html = re.sub(r'<(br|p|div|tr|h[1-6])[^>]*>', '\n', html, flags=re.IGNORECASE)
+            
+            # 3. Remove all remaining tags
+            html = re.sub(r'<[^>]+>', ' ', html)
+            
+            # 4. Normalize whitespace but keep some newlines
+            html = re.sub(r'[ \t]+', ' ', html) # squash spaces/tabs
+            html = re.sub(r'\n\s*\n+', '\n\n', html) # normalize multiple newlines
+            return html.strip()
+
+        def extract_all_parts(payload: Dict[str, Any]) -> Dict[str, str]:
+            parts = {}
+            mime_type = payload.get("mimeType", "").lower()
             body = payload.get("body", {})
             data = body.get("data")
 
             if data:
                 try:
-                    return base64.urlsafe_b64decode(data).decode(
-                        "utf-8", errors="ignore"
-                    )
+                    text = base64.urlsafe_b64decode(data).decode("utf-8", errors="ignore")
+                    parts[mime_type] = text
                 except Exception:
-                    return ""
+                    pass
 
             for part in payload.get("parts", []):
-                text = extract_body(part)
-                if text:
-                    return text
+                parts.update(extract_all_parts(part))
 
-            return ""
+            return parts
 
-        body_text = extract_body(message.get("payload", {}))
+        all_parts = extract_all_parts(message.get("payload", {}))
+        
+        # 🔒 Prefer plain text, fallback to cleaned HTML
+        plain_text = all_parts.get("text/plain")
+        if plain_text:
+             body_text = plain_text
+        else:
+            html_content = all_parts.get("text/html")
+            if html_content:
+                body_text = _clean_html(html_content)
+            else:
+                body_text = ""
 
         # 🔒 Canonical date normalization (single source of truth)
         date_info = self._normalize_gmail_date(message)
@@ -83,17 +109,15 @@ class GetEmailContentTool:
         return {
             # 🔒 identity
             "id": message.get("id"),
-
-            # 🔒 preview-compatible fields
-            "from_": headers.get("from", ""),
-            "subject": headers.get("subject", ""),
-            "snippet": message.get("snippet", ""),
-
-            # 🔒 bounded full content
-            "body": (body_text or "")[:4000],
-
-            # 🔒 canonical date block
+            "subject": headers.get("subject", "(no subject)"),
+            "from": headers.get("from", ""),
             "date": date_info,
+            # 🔒 content (cleaned & safely truncated)
+            "body": (body_text or "")[:10000],
+            "raw_data": {
+                "id": message.get("id"),
+                "body": (body_text or "")[:10000],
+            },
         }
 
     # --------------------------------------------------
