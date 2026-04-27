@@ -165,7 +165,7 @@ def _summarize_result(objective: Dict[str, Any], result: Dict[str, Any]) -> str:
     if intent == "count":
         data = result.get("artifacts", {}).get("raw_data", {})
         count = data.get("count", 0)
-        return f"You have {count} emails matching that criteria."
+        return f"You have {count} emails."
 
     return "Action completed successfully."
 
@@ -370,12 +370,68 @@ def atlas_node(state: Dict[str, Any]) -> Dict[str, Any]:
     messages = state.get("messages", [])
     last_human = next(m for m in reversed(messages) if isinstance(m, HumanMessage))
     state["utterance"] = last_human.content
+    # ----------------------------
+    # 🧠 Query Classification
+    # ----------------------------
+    def _classify_query(text: str) -> str:
+        # Skip if it's the very first message
+        if len(messages) <= 1:
+            return "fresh"
+
+        # Provide a small slice of context to the classifier
+        context_slice = messages[-2:] 
+        history_str = "\n".join([f"{'User' if m.type == 'human' else 'Assistant'}: {m.content}" for m in context_slice])
+
+        prompt = f"""
+        Classify the user's latest message into one of three categories based on the recent context:
+        
+        Recent Context:
+        {history_str}
+
+        Latest User Message: "{text}"
+        
+        Categories:
+        1. "followup": The user wants to modify, fix, add to, or continue the task discussed in the recent context.
+        2. "retrieval": The user is asking to find or recall information from much earlier or from their memory store.
+        3. "fresh": The user is starting a completely new, independent task unrelated to the recent context.
+
+        Output only the category name (followup, retrieval, or fresh).
+        """
+        try:
+            from coremind.llms.factory import LLMFactory
+            classifier = LLMFactory.atlasSummary()
+            response = classifier.invoke(prompt).content.strip().lower()
+            
+            if "followup" in response: return "followup"
+            if "retrieval" in response: return "retrieval"
+            return "fresh"
+        except Exception as e:
+            log.warning("Query classification failed, defaulting to fresh: %s", e)
+            return "fresh"
+
+    query_type = _classify_query(state["utterance"])
+    state["query_type"] = query_type    
+    log.info("Query type: %s", state.get("query_type"))
+    if query_type == "followup":
+        log.info("Classification Context: %s", messages[-2:] if len(messages) >= 2 else "None")
+    # ----------------------------
+    # 🧠 Memory Injection
+    # ----------------------------
+    memory_context = []
+
+    if query_type == "followup":
+        # Use recent messages (already in state)
+        memory_context = messages[-4:]  # last 2 turns approx
+
+    elif query_type == "retrieval":
+        if "memory_store" in state:
+            memory_context = state["memory_store"].search(state["utterance"])
+
+    state["memory_context"] = memory_context    
     state["terminated"] = False
     state.setdefault("objective_queue", [])
-
     current_obj = state.get("objective")
     result = state.get("result")
-    
 
     # ==================================================
     # 1️⃣ CONSUME RESULT
@@ -475,7 +531,21 @@ def atlas_node(state: Dict[str, Any]) -> Dict[str, Any]:
             }
 
         summary = _summarize_result(current_obj, result)
-        log.info("Execution complete, terminating ATLAS", summary)
+        # ----------------------------
+        # 🧠 Store memory (NEW)
+        # ----------------------------
+        if "memory_store" in state and current_obj:
+            try:
+                state["memory_store"].add(
+                    objective=current_obj,
+                    result=result,
+                    summary=summary
+                )
+            except Exception as e:
+                log.warning("Memory store failed: %s", e)
+
+
+        log.info("Execution complete, terminating ATLAS: %s", summary)
 
         return {
             **state,
@@ -505,10 +575,23 @@ def atlas_node(state: Dict[str, Any]) -> Dict[str, Any]:
         log.info("Planning new objectives for utterance: %s", state["utterance"])
         print("LLM TYPE:", type(planner_llm))
 
-        planner_response = planner_llm.invoke(
-            [SystemMessage(ATLAS_PLANNER_PROMPT), HumanMessage(state["utterance"])]
-        )
+        # ----------------------------
+        # 🧠 Inject memory into planner
+        # ----------------------------
+        memory_block = ""
+        if state.get("memory_context"):
+            memory_block = "\n\nRelevant past context:\n"
+            for m in state["memory_context"]:
+                if isinstance(m, (HumanMessage, AIMessage)):
+                    memory_block += f"- {m.content}\n"
+                elif isinstance(m, dict):
+                    memory_block += f"- {m.get('summary', '')}\n"
 
+        planner_input = state["utterance"] + memory_block
+
+        planner_response = planner_llm.invoke(
+            [SystemMessage(ATLAS_PLANNER_PROMPT), HumanMessage(planner_input)]
+        )
         log.debug("Planner raw response: %s", planner_response.content)
 
         try:
@@ -527,12 +610,21 @@ def atlas_node(state: Dict[str, Any]) -> Dict[str, Any]:
         if not objectives:
             log.info("ℹ️ No objectives → switching to DIRECT response mode")
 
-            # Call Atlas in RESPONSE MODE (no tools, just answer)
-            prompt = f"""
+            prompt = """
             You can respond to the user directly.
             """
+
+            direct_input = state["utterance"]
+
+            if state.get("memory_context"):
+                direct_input += "\n\nRelevant context:\n"
+                for m in state["memory_context"]:
+                    if isinstance(m, (HumanMessage, AIMessage)):
+                        direct_input += f"- {m.content}\n"
+
+            # ✅ CALL LLM OUTSIDE LOOP
             direct_response = planner_llm.invoke(
-                [SystemMessage(prompt), HumanMessage(state["utterance"])]
+                [SystemMessage(prompt), HumanMessage(direct_input)]
             )
 
             return {

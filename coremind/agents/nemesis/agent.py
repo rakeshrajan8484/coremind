@@ -17,6 +17,7 @@ TERMINAL_INTENTS = {
     ("email", "summarize"),
     ("email", "compose_message"),
     ("email", "send_draft"),
+    ("email", "count"),
 }
 
 
@@ -253,6 +254,10 @@ class NemesisAgent:
         )
 
         result = tool.run(resolved_args)
+
+        # Ensure count results are wrapped for ATLAS summary
+        if self.current_objective.get("intent") == "count" and isinstance(result, list):
+            result = {"count": len(result)}
 
         self.called_tools.add(tool_name)
         self.observations.append({

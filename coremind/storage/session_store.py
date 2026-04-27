@@ -20,6 +20,17 @@ def _serialize_state(state: CoreMindState) -> dict:
     if data.get("messages"):
         data["messages"] = messages_to_dict(data["messages"])
 
+    if data.get("memory_context"):
+        data["memory_context"] = messages_to_dict([
+            m for m in data["memory_context"] 
+            if hasattr(m, "content") # Only serialize Langchain messages
+        ])
+
+    if data.get("memory_store"):
+        # Store only the raw data list from MemoryStore
+        if hasattr(data["memory_store"], "data"):
+            data["memory_store"] = data["memory_store"].data
+
     if isinstance(data.get("called_tools"), set):
         data["called_tools"] = list(data["called_tools"])
 
@@ -36,6 +47,20 @@ def _deserialize_state(data: dict) -> CoreMindState:
         except Exception as e:
             logger.error(f"Failed to deserialize messages: {e}")
             data["messages"] = []
+
+    if data.get("memory_context"):
+        try:
+            data["memory_context"] = messages_from_dict(data["memory_context"])
+        except Exception as e:
+            logger.error(f"Failed to deserialize memory_context: {e}")
+            data["memory_context"] = []
+
+    if data.get("memory_store"):
+        from coremind.memory.memory_store import MemoryStore
+        store = MemoryStore()
+        if isinstance(data["memory_store"], list):
+            store.data = data["memory_store"]
+        data["memory_store"] = store
 
     if isinstance(data.get("called_tools"), list):
         data["called_tools"] = set(data["called_tools"])

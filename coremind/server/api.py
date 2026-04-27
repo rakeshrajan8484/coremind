@@ -6,13 +6,13 @@ from coremind.graph.graph import build_graph
 from coremind.state import CoreMindState
 from coremind.storage.session_store import SessionStore
 from typing import Optional, Dict, Any
-
+from coremind.memory.memory_store import MemoryStore
 import asyncio
 import os
 import logging
 import requests
 from dotenv import load_dotenv
-load_dotenv()
+load_dotenv(override=True)
 # -------------------------------------------------
 # App + Graph Init
 # -------------------------------------------------
@@ -66,6 +66,10 @@ async def chat(req: ChatRequest):
         # ✅ Extract root_path safely
         root_path = req.context.get("root_path") if req.context else None
         
+        # ✅ Lazy init session store
+        if SESSION_STORE.pool is None:
+            await SESSION_STORE.initialize()
+
         # ✅ Load session
         state = await SESSION_STORE.load_session(req.session_id)
         if root_path:
@@ -76,6 +80,7 @@ async def chat(req: ChatRequest):
                 "objective": None,
                 "objective_queue": [],
                 "completed_objectives": [],
+                "memory_store": MemoryStore(),
             }
 
         # ✅ CRITICAL FIX — reset execution state
